@@ -65,12 +65,12 @@ def test_sales_roundtrip() -> None:
             volume=3,
             fetched_at=T0,
         )
-        for w in SalesWindow
+        for w in reversed(SalesWindow)
     ]
     s.save_sales(stats)
     got = s.latest_sales(NAME, "skinport")
     assert len(got) == 4
-    assert {g.window for g in got} == set(SalesWindow)
+    assert [g.window for g in got] == list(SalesWindow)
     assert all(g.median == Decimal("2.5") and g.max is None for g in got)
 
 

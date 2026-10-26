@@ -160,7 +160,7 @@ def test_cli_fees_smoke() -> None:
     )
     assert result.exit_code == 0, result.output
     assert "Чистая прибыль:           -5.41 EUR" in result.output
-    assert "НЕ" not in result.output.split("Расчёт:")[1][:3]
+    assert "не все подтверждены" in result.output
 
 
 def test_cli_requires_fx_for_usd() -> None:

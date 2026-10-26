@@ -75,7 +75,7 @@ def test_items_parsed_with_exact_decimals() -> None:
     assert ak.currency is Currency.EUR
     assert ak.kind is QuoteKind.AGGREGATE
     assert ak.source_updated_at == datetime.fromtimestamp(1793030000, tz=UTC)
-    assert ak.url and ak.url.startswith("https://skinport.com/market/")
+    assert ak.url == "https://skinport.com/item/csgo/ak-47-redline-field-tested"
 
     empty = quotes["Sticker | Rare Example"]
     assert empty.min_price is None and empty.quantity == 0

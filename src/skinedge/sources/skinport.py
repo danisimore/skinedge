@@ -134,7 +134,7 @@ class SkinportSource:
                         min_price=_decimal(row.get("min_price")),
                         median_price=_decimal(row.get("median_price")),
                         quantity=int(row.get("quantity") or 0),
-                        url=row.get("market_page") or row.get("item_page"),
+                        url=row.get("item_page") or row.get("market_page"),
                         source_updated_at=_timestamp(row.get("updated_at")),
                         fetched_at=fetched_at,
                     )

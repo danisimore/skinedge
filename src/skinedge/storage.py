@@ -181,10 +181,11 @@ class Storage:
         cur = self.conn.execute(
             "SELECT * FROM sales_stats WHERE market_hash_name = ? AND source = ? AND fetched_at = ("
             "  SELECT MAX(fetched_at) FROM sales_stats WHERE market_hash_name = ? AND source = ?"
-            ") ORDER BY version, period",
+            ")",
             (market_hash_name, source, market_hash_name, source),
         )
-        return [
+        order = list(SalesWindow)
+        stats = [
             SalesStats(
                 source=r["source"],
                 app_id=r["app_id"],
@@ -201,6 +202,7 @@ class Storage:
             )
             for r in cur
         ]
+        return sorted(stats, key=lambda st: (st.version or "", order.index(st.window)))
 
     def search_names(self, pattern: str, limit: int = 20) -> list[str]:
         """Названия предметов, содержащие подстроку (без учёта регистра)."""

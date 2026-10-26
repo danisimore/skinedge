@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Annotated
@@ -26,6 +27,11 @@ app = typer.Typer(help="SkinEdge: анализ арбитража игровых
 @app.callback()
 def main() -> None:
     """SkinEdge CLI."""
+    # В Windows вывод в файл или pipe по умолчанию идёт в cp1252 и падает на кириллице.
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
 
 
 def _decimal(value: str, name: str) -> Decimal:
@@ -126,7 +132,12 @@ def fees(
         typer.echo("\nОговорки:")
         for w in result.warnings:
             typer.echo(f"  ! {w}")
-    status = "полный" if result.complete else "НЕПОЛНЫЙ (есть неизвестные комиссии)"
+    if not result.complete:
+        status = "НЕПОЛНЫЙ: есть неизвестные комиссии"
+    elif result.confirmed:
+        status = "полный, все комиссии подтверждены"
+    else:
+        status = "все комиссии известны, но не все подтверждены официально или в аккаунте"
     typer.echo(f"\nРасчёт: {status}. Это оценка, а не гарантированная прибыль.")
 
 
