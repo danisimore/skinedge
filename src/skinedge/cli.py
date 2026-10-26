@@ -18,6 +18,7 @@ from skinedge.fx import FxRates
 from skinedge.money import Currency, Money
 from skinedge.quotes import Quote
 from skinedge.sources.base import SourceError
+from skinedge.sources.dmarket import DMarketSigner, DMarketSource
 from skinedge.sources.skinport import SkinportSource
 from skinedge.storage import Storage
 
@@ -164,36 +165,77 @@ def _age(quote: Quote, now: datetime) -> str:
     return f"{minutes} мин назад"
 
 
+def _dmarket_source(settings: Settings) -> DMarketSource:
+    if not settings.dmarket_public_key or not settings.dmarket_secret_key:
+        typer.echo(
+            "Нет ключей DMarket: заполни SKINEDGE_DMARKET_PUBLIC_KEY и "
+            "SKINEDGE_DMARKET_SECRET_KEY в .env",
+            err=True,
+        )
+        raise typer.Exit(1)
+    try:
+        signer = DMarketSigner(
+            settings.dmarket_public_key, settings.dmarket_secret_key.get_secret_value()
+        )
+    except ValueError as exc:
+        typer.echo(f"Ключи DMarket не подходят: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    return DMarketSource(signer)
+
+
 @app.command()
 def fetch(
-    source: Annotated[str, typer.Argument(help="Источник: skinport")] = "skinport",
+    source: Annotated[str, typer.Argument(help="Источник: skinport или dmarket")] = "skinport",
     app_id: Annotated[int, typer.Option("--app-id", help="Steam app_id (730 = CS2)")] = 730,
-    sales: Annotated[bool, typer.Option(help="Также загрузить статистику продаж")] = True,
+    sales: Annotated[bool, typer.Option(help="Skinport: загрузить статистику продаж")] = True,
+    limit: Annotated[
+        int, typer.Option(help="DMarket: сколько самых ликвидных предметов Skinport проверить")
+    ] = 200,
+    min_price: Annotated[str, typer.Option("--min-price", help="DMarket: мин. цена, EUR")] = "1",
+    max_price: Annotated[str, typer.Option("--max-price", help="DMarket: макс. цена, EUR")] = "500",
     show: Annotated[int, typer.Option(help="Сколько примеров показать")] = 5,
     verbose: Annotated[bool, typer.Option("--verbose", "-v")] = False,
 ) -> None:
     """Загружает реальные цены с площадки и сохраняет их в историю."""
-    logging.basicConfig(level=logging.INFO if verbose else logging.WARNING)
-    if source != "skinport":
-        raise typer.BadParameter("Пока поддерживается только skinport")
+    logging.basicConfig(level=logging.DEBUG if verbose else logging.WARNING)
+    for noisy in ("httpcore", "hpack"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
     settings = Settings()
     storage = Storage(settings.db_path)
-    src = SkinportSource()
     try:
-        quotes = src.fetch_quotes(app_id)
-        n_quotes = storage.save_quotes(quotes)
-        n_sales = storage.save_sales(src.fetch_sales(app_id)) if sales else 0
+        if source == "skinport":
+            _fetch_skinport(storage, app_id, sales, show)
+        elif source == "dmarket":
+            names = storage.liquid_names(
+                "skinport",
+                limit,
+                _decimal(min_price, "--min-price"),
+                _decimal(max_price, "--max-price"),
+            )
+            if not names:
+                typer.echo("Сначала загрузи Skinport: skinedge fetch skinport", err=True)
+                raise typer.Exit(1)
+            _fetch_dmarket(storage, _dmarket_source(settings), names, app_id, show)
+        else:
+            raise typer.BadParameter("Источник: skinport или dmarket")
     except SourceError as exc:
         typer.echo(f"Ошибка источника: {exc}", err=True)
         raise typer.Exit(1) from exc
     finally:
         storage.close()
+    typer.echo(f"База: {settings.db_path}")
+
+
+def _fetch_skinport(storage: Storage, app_id: int, sales: bool, show: int) -> None:
+    src = SkinportSource()
+    quotes = src.fetch_quotes(app_id)
+    n_quotes = storage.save_quotes(quotes)
+    n_sales = storage.save_sales(src.fetch_sales(app_id)) if sales else 0
 
     listed = [q for q in quotes if q.min_price is not None and q.quantity > 0]
     now = datetime.now(UTC)
     typer.echo(f"Skinport, app_id={app_id}: {n_quotes} предметов, из них с лотами {len(listed)}")
     typer.echo(f"Статистика продаж: {n_sales} записей")
-    typer.echo(f"База: {settings.db_path}")
     if listed:
         newest = max(q.source_updated_at or q.fetched_at for q in listed)
         typer.echo(f"Самое свежее обновление на площадке: {newest:%Y-%m-%d %H:%M} UTC")
@@ -205,6 +247,62 @@ def fetch(
             f"  {q.market_hash_name}: от {q.min_price} {q.currency.value}, "
             f"лотов {q.quantity}, обновлено {_age(q, now)}"
         )
+
+
+def _fetch_dmarket(
+    storage: Storage, src: DMarketSource, names: list[str], app_id: int, show: int
+) -> None:
+    quotes = src.fetch_best_prices(names, app_id)
+    storage.save_quotes(quotes)
+    with_ask = [q for q in quotes if q.min_price is not None]
+    with_bid = [q for q in quotes if q.best_bid is not None]
+    typer.echo(
+        f"DMarket, app_id={app_id}: запрошено {len(names)}, получено {len(quotes)}, "
+        f"с предложениями {len(with_ask)}, с заявками {len(with_bid)}"
+    )
+    for offer_type in ("dmarket", "p2p"):
+        try:
+            rule = src.fetch_sell_fees(app_id, offer_type)[0]
+            typer.echo(f"Комиссия продавца ({offer_type}) из API: {rule.describe()}")
+        except SourceError as exc:
+            typer.echo(f"Комиссия продавца ({offer_type}): не получена ({exc})")
+    for q in sorted(with_ask, key=lambda q: q.quantity, reverse=True)[:show]:
+        typer.echo(
+            f"  {q.market_hash_name}: ask {q.min_price} USD ({q.quantity} шт.), "
+            f"bid {q.best_bid} USD ({q.bid_quantity} шт.)"
+        )
+
+
+@app.command()
+def sales(
+    source: Annotated[str, typer.Argument(help="Площадка: dmarket")],
+    name: Annotated[str, typer.Argument(help="Точное название предмета")],
+    app_id: Annotated[int, typer.Option("--app-id")] = 730,
+) -> None:
+    """Последние продажи предмета на площадке (DMarket: до 20 сделок)."""
+    if source != "dmarket":
+        raise typer.BadParameter("Пока поддерживается только dmarket")
+    src = _dmarket_source(Settings())
+    try:
+        items = src.fetch_last_sales(name, app_id)
+    except SourceError as exc:
+        typer.echo(f"Ошибка источника: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    if not items:
+        typer.echo("Продаж не найдено")
+    for s in items:
+        extra = []
+        if s.float_value is not None:
+            extra.append(f"float {s.float_value}")
+        if s.phase:
+            extra.append(s.phase)
+        tail = f" ({', '.join(extra)})" if extra else ""
+        typer.echo(f"  {s.sold_at:%Y-%m-%d %H:%M} UTC  {s.price} USD  {s.tx_type or ''}{tail}")
+    if items:
+        prices = sorted(x.price for x in items)
+        mid = len(prices) // 2
+        median = prices[mid] if len(prices) % 2 else (prices[mid - 1] + prices[mid]) / 2
+        typer.echo(f"Медиана последних {len(prices)} продаж: {median} USD")
 
 
 @app.command()
@@ -235,8 +333,11 @@ def item(
         for q in quotes:
             stale = " УСТАРЕЛО" if q.is_stale(now, timedelta(minutes=max_age_min)) else ""
             price = f"{q.min_price} {q.currency.value}" if q.min_price is not None else "нет лотов"
+            bid = ""
+            if q.best_bid is not None:
+                bid = f", лучшая заявка {q.best_bid} {q.currency.value} ({q.bid_quantity} шт.)"
             typer.echo(
-                f"  {q.source}: от {price}, лотов {q.quantity}, "
+                f"  {q.source}: от {price}, лотов {q.quantity}{bid}, "
                 f"обновлено {_age(q, now)}{stale} ({q.kind.value})"
             )
             if q.url:

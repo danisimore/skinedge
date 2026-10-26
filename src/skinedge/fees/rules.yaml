@@ -24,6 +24,13 @@ marketplaces:
     transfer_lock_days: 7
     settlement_days: 7
     item_url: "https://csfloat.com/search?market_hash_name={name}"
+  dmarket:
+    currency: USD
+    payout: cash
+    transfer_lock_days: 7
+    # Баланс от продажи заблокирован 7 дней (Trade Protection).
+    settlement_days: 7
+    item_url: "https://dmarket.com/ingame-items/item-list/csgo-skins?title={name}"
   steam:
     # Валюта кошелька пользователя; для Финляндии EUR.
     currency: EUR
@@ -148,6 +155,47 @@ rules:
     source: "https://www.steamdb.com/en/markets/csfloat"
     verified_at: 2026-07-02
     note: "Тариф 0.5–2.5% зависит от оборота; берём худший случай"
+
+  # ---------- DMarket ----------
+  # Комиссию продавца SkinEdge получает из API (customized-fees) и подставляет
+  # вместо правила ниже. Правило ниже действует, только если API недоступен.
+  - id: dmarket.buy
+    marketplace: dmarket
+    operation: buy
+    kind: percent
+    rate: "0"
+    currency: USD
+    verification: third_party
+    source: "https://csdb.gg/trading-site/dmarket/"
+    note: "0% для покупателя по стороннему обзору"
+
+  - id: dmarket.sell.fallback
+    marketplace: dmarket
+    operation: sell
+    kind: percent
+    rate: "0.10"
+    currency: USD
+    verification: third_party
+    source: "https://csdb.gg/trading-site/dmarket/"
+    note: "Худший случай из обзора (2–10%); заменяется ставкой из API"
+
+  - id: dmarket.deposit.any
+    marketplace: dmarket
+    operation: deposit
+    kind: percent
+    rate: "0"
+    currency: USD
+    verification: unknown
+    note: "Комиссии пополнения не найдены"
+
+  - id: dmarket.withdraw.any
+    marketplace: dmarket
+    operation: withdraw
+    kind: percent
+    rate: "0"
+    currency: USD
+    verification: unknown
+    note: "Способы и комиссии вывода (крипта, банк, PayPal) не найдены"
 
   # ---------- Steam Community Market ----------
   - id: steam.buy

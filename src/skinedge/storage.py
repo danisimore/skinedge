@@ -28,6 +28,8 @@ CREATE TABLE IF NOT EXISTS quotes (
     min_price TEXT,
     median_price TEXT,
     quantity INTEGER NOT NULL,
+    best_bid TEXT,
+    bid_quantity INTEGER,
     listing_id TEXT,
     url TEXT,
     source_updated_at TEXT,
@@ -89,6 +91,16 @@ class Storage:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.executescript(SCHEMA)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Добавляет колонки, появившиеся после создания базы."""
+        columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(quotes)")}
+        with self._tx() as c:
+            if "best_bid" not in columns:
+                c.execute("ALTER TABLE quotes ADD COLUMN best_bid TEXT")
+            if "bid_quantity" not in columns:
+                c.execute("ALTER TABLE quotes ADD COLUMN bid_quantity INTEGER")
 
     def close(self) -> None:
         """Закрывает соединение."""
@@ -111,6 +123,8 @@ class Storage:
                 _d(q.min_price),
                 _d(q.median_price),
                 q.quantity,
+                _d(q.best_bid),
+                q.bid_quantity,
                 q.listing_id,
                 q.url,
                 _t(q.source_updated_at),
@@ -120,9 +134,9 @@ class Storage:
         ]
         with self._tx() as c:
             c.executemany(
-                "INSERT INTO quotes (source, app_id, market_hash_name, currency, kind, min_price,"
-                " median_price, quantity, listing_id, url, source_updated_at, fetched_at)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO quotes (source, app_id, market_hash_name, currency, kind,"
+                " min_price, median_price, quantity, best_bid, bid_quantity, listing_id, url,"
+                " source_updated_at, fetched_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 rows,
             )
         return len(rows)
@@ -204,6 +218,42 @@ class Storage:
         ]
         return sorted(stats, key=lambda st: (st.version or "", order.index(st.window)))
 
+    def liquid_names(
+        self,
+        source: str,
+        limit: int,
+        min_price: Decimal | None = None,
+        max_price: Decimal | None = None,
+    ) -> list[str]:
+        """Самые ликвидные предметы последней загрузки источника (по числу лотов).
+
+        Args:
+            source: Площадка, по чьей последней загрузке отбирать.
+            limit: Сколько названий вернуть.
+            min_price: Нижняя граница минимальной цены.
+            max_price: Верхняя граница минимальной цены.
+
+        Returns:
+            Названия, от самых ликвидных.
+        """
+        rows = self.conn.execute(
+            "SELECT market_hash_name, min_price, quantity FROM quotes WHERE source = ?"
+            " AND fetched_at = (SELECT MAX(fetched_at) FROM quotes WHERE source = ?)"
+            " AND min_price IS NOT NULL ORDER BY quantity DESC",
+            (source, source),
+        )
+        names: list[str] = []
+        for r in rows:
+            price = Decimal(r["min_price"])
+            if min_price is not None and price < min_price:
+                continue
+            if max_price is not None and price > max_price:
+                continue
+            names.append(r["market_hash_name"])
+            if len(names) >= limit:
+                break
+        return names
+
     def search_names(self, pattern: str, limit: int = 20) -> list[str]:
         """Названия предметов, содержащие подстроку (без учёта регистра)."""
         cur = self.conn.execute(
@@ -224,6 +274,8 @@ class Storage:
             min_price=_pd(r["min_price"]),
             median_price=_pd(r["median_price"]),
             quantity=r["quantity"],
+            best_bid=_pd(r["best_bid"]),
+            bid_quantity=r["bid_quantity"],
             listing_id=r["listing_id"],
             url=r["url"],
             source_updated_at=_pt(r["source_updated_at"]),

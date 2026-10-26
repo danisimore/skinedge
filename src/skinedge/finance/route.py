@@ -122,6 +122,7 @@ class RouteCalculator:
         deposit_method: Способ пополнения площадки покупки или ``"balance"``.
         withdraw_method: Способ вывода с площадки продажи.
         base_currency: Валюта, в которой считается прибыль.
+        item: Название предмета: включает комиссии, заданные для конкретного предмета.
     """
 
     def __init__(
@@ -133,6 +134,7 @@ class RouteCalculator:
         deposit_method: str = BALANCE,
         withdraw_method: str | None = None,
         base_currency: Currency = Currency.EUR,
+        item: str | None = None,
     ) -> None:
         self.schedule = schedule
         self.fx = fx
@@ -141,6 +143,7 @@ class RouteCalculator:
         self.deposit_method = deposit_method
         self.withdraw_method = withdraw_method
         self.base = base_currency
+        self.item = item
         if self.sell.payout is Payout.CASH and withdraw_method is None:
             methods = schedule.methods(sell_market, Operation.WITHDRAW)
             self.withdraw_method = methods[0] if len(methods) == 1 else None
@@ -150,7 +153,7 @@ class RouteCalculator:
     def _apply(
         self, operation: Operation, market: str, base: Money, method: str | None, label: str
     ) -> tuple[Money, list[FeeLine], list[str]]:
-        rules = self.schedule.select(market, operation, base, method)
+        rules = self.schedule.select(market, operation, base, method, self.item)
         if not rules:
             suffix = f" ({method})" if method else ""
             return Money.zero(base.currency), [], [f"Нет правила: {market} {operation}{suffix}"]
@@ -204,7 +207,7 @@ class RouteCalculator:
         lines: list[FeeLine] = []
         warnings: list[str] = []
 
-        rules = self.schedule.select(self.sell.name, Operation.SELL, price)
+        rules = self.schedule.select(self.sell.name, Operation.SELL, price, item=self.item)
         steam_rules = [r for r in rules if r.kind is FeeKind.STEAM]
         if steam_rules:
             rule = steam_rules[0]

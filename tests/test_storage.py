@@ -97,3 +97,39 @@ def test_cli_item_no_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     result = CliRunner().invoke(app, ["item", "nothing"])
     assert result.exit_code == 1
     assert "Нет данных" in result.output
+
+
+def test_migration_adds_bid_columns(tmp_path: Path) -> None:
+    import sqlite3
+
+    db = tmp_path / "old.db"
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE quotes (id INTEGER PRIMARY KEY, source TEXT NOT NULL,"
+        " app_id INTEGER NOT NULL, market_hash_name TEXT NOT NULL, currency TEXT NOT NULL,"
+        " kind TEXT NOT NULL,"
+        " min_price TEXT, median_price TEXT, quantity INTEGER NOT NULL, listing_id TEXT, url TEXT,"
+        " source_updated_at TEXT, fetched_at TEXT NOT NULL)"
+    )
+    conn.commit()
+    conn.close()
+    s = Storage(db)
+    q = quote("5", T0).model_copy(update={"best_bid": Decimal("4.5"), "bid_quantity": 3})
+    s.save_quotes([q])
+    got = s.latest_quotes(NAME)[0]
+    assert got.best_bid == Decimal("4.5") and got.bid_quantity == 3
+
+
+def test_liquid_names_uses_latest_fetch_and_price_range() -> None:
+    s = Storage(":memory:")
+    old = [quote("1", T0).model_copy(update={"market_hash_name": "old"})]
+    new = [
+        quote("2", T0 + timedelta(minutes=1)).model_copy(
+            update={"market_hash_name": n, "quantity": qty, "min_price": Decimal(p)}
+        )
+        for n, qty, p in [("a", 5, "2"), ("b", 50, "3"), ("c", 500, "900")]
+    ]
+    s.save_quotes(old)
+    s.save_quotes(new)
+    assert s.liquid_names("skinport", 10, max_price=Decimal("500")) == ["b", "a"]
+    assert s.liquid_names("skinport", 1) == ["c"]

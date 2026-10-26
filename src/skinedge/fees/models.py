@@ -45,6 +45,7 @@ class FeeRule(BaseModel):
         marketplace: Площадка (``skinport``, ``csfloat``, ``steam``...).
         operation: Операция, к которой относится правило.
         method: Способ оплаты или вывода (``sepa``, ``card``...). ``None`` значит любой.
+        item: Правило только для этого предмета (сниженные комиссии); заменяет общие правила.
         kind: Способ расчёта.
         rate: Доля для процентных комиссий (0.08 = 8%).
         fixed: Фиксированная сумма для ``FeeKind.FIXED``.
@@ -66,6 +67,7 @@ class FeeRule(BaseModel):
     marketplace: str
     operation: Operation
     method: str | None = None
+    item: str | None = None
     kind: FeeKind
     rate: Decimal = Decimal(0)
     fixed: Decimal = Decimal(0)

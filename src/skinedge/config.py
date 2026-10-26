@@ -16,7 +16,9 @@ class Settings(BaseSettings):
         db_path: Файл базы SQLite с историей цен.
         fee_rules_path: Свой файл правил комиссий вместо встроенного.
         fx_spread: Потери при конвертации валют (доля).
-        csfloat_api_key: Ключ CSFloat API (понадобится на этапе 3).
+        csfloat_api_key: Ключ CSFloat API (после первой сделки на CSFloat).
+        dmarket_public_key: Публичный ключ DMarket Trading API.
+        dmarket_secret_key: Секретный ключ DMarket Trading API.
         telegram_bot_token: Токен Telegram-бота (этап 6).
         telegram_chat_id: Чат для уведомлений (этап 6).
     """
@@ -27,5 +29,7 @@ class Settings(BaseSettings):
     fee_rules_path: Path | None = None
     fx_spread: Decimal = Decimal("0.01")
     csfloat_api_key: SecretStr | None = None
+    dmarket_public_key: str | None = None
+    dmarket_secret_key: SecretStr | None = None
     telegram_bot_token: SecretStr | None = None
     telegram_chat_id: str | None = None

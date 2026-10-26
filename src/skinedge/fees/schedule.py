@@ -46,6 +46,27 @@ class Marketplace(BaseModel):
 class FeeSchedule:
     """Набор площадок и правил комиссий."""
 
+    def with_rules(
+        self, rules: list[FeeRule], replace_marketplace: str | None = None
+    ) -> FeeSchedule:
+        """Новое расписание с дополнительными правилами.
+
+        Args:
+            rules: Добавляемые правила (например, комиссии, полученные по API).
+            replace_marketplace: Если указано, сначала убрать правила этой площадки
+                для операций, которые есть среди новых правил.
+
+        Returns:
+            Новое расписание; исходное не меняется.
+        """
+        kept = self.rules
+        if replace_marketplace is not None:
+            ops = {r.operation for r in rules if r.marketplace == replace_marketplace}
+            kept = [
+                r for r in kept if not (r.marketplace == replace_marketplace and r.operation in ops)
+            ]
+        return FeeSchedule(self.marketplaces, [*kept, *rules])
+
     def __init__(self, marketplaces: dict[str, Marketplace], rules: list[FeeRule]) -> None:
         ids = [r.id for r in rules]
         duplicates = {i for i in ids if ids.count(i) > 1}
@@ -102,26 +123,32 @@ class FeeSchedule:
         operation: Operation,
         base: Money,
         method: str | None = None,
+        item: str | None = None,
     ) -> list[FeeRule]:
         """Правила, применимые к операции.
 
         Правило без ``method`` применяется к любому способу. Правило с ``method``
-        применяется только к нему.
+        применяется только к нему. Если есть правила для конкретного предмета
+        (``item``), они заменяют общие правила этой операции.
 
         Args:
             marketplace: Площадка.
             operation: Операция.
             base: База комиссии (нужна для ценовых диапазонов).
             method: Способ оплаты или вывода.
+            item: Название предмета.
 
         Returns:
             Список подходящих правил; пустой, если правил нет.
         """
-        return [
+        matching = [
             r
             for r in self.rules
             if r.marketplace == marketplace
             and r.operation is operation
             and (r.method is None or r.method == method)
+            and (r.item is None or r.item == item)
             and r.applies_to(base)
         ]
+        specific = [r for r in matching if r.item is not None]
+        return specific or matching
