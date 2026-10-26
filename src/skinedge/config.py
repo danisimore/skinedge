@@ -5,7 +5,7 @@ from __future__ import annotations
 from decimal import Decimal
 from pathlib import Path
 
-from pydantic import SecretStr
+from pydantic import AliasChoices, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,6 +21,9 @@ class Settings(BaseSettings):
         dmarket_secret_key: Секретный ключ DMarket Trading API.
         telegram_bot_token: Токен Telegram-бота (этап 6).
         telegram_chat_id: Чат для уведомлений (этап 6).
+
+    Ключ CSFloat и токен бота читаются и под короткими именами
+    ``SKINEDGE_CSFLOAT_KEY`` и ``TG_BOT_TOKEN``.
     """
 
     model_config = SettingsConfigDict(env_prefix="SKINEDGE_", env_file=".env", extra="ignore")
@@ -28,8 +31,12 @@ class Settings(BaseSettings):
     db_path: Path = Path("data/skinedge.db")
     fee_rules_path: Path | None = None
     fx_spread: Decimal = Decimal("0.01")
-    csfloat_api_key: SecretStr | None = None
+    csfloat_api_key: SecretStr | None = Field(
+        None, validation_alias=AliasChoices("SKINEDGE_CSFLOAT_API_KEY", "SKINEDGE_CSFLOAT_KEY")
+    )
     dmarket_public_key: str | None = None
     dmarket_secret_key: SecretStr | None = None
-    telegram_bot_token: SecretStr | None = None
+    telegram_bot_token: SecretStr | None = Field(
+        None, validation_alias=AliasChoices("SKINEDGE_TELEGRAM_BOT_TOKEN", "TG_BOT_TOKEN")
+    )
     telegram_chat_id: str | None = None
