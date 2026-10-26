@@ -21,7 +21,7 @@ from skinedge.paper import evaluate as paper_evaluate
 from skinedge.paper import record as paper_record
 from skinedge.paper import summarize as paper_summarize
 from skinedge.quotes import Quote, SalesWindow
-from skinedge.scanner import Opportunity, ScanConfig, Scanner
+from skinedge.scanner import Opportunity, ScanConfig, Scanner, stats_from_sales
 from skinedge.sources import ecb
 from skinedge.sources.base import SourceError
 from skinedge.sources.dmarket import DMarketSigner, DMarketSource
@@ -395,6 +395,37 @@ def render_opportunity(n: int, opp: Opportunity) -> str:
     return "\n".join(lines)
 
 
+def _trends(storage: Storage, since: datetime) -> dict[str, Decimal]:
+    """Изменение цены на Skinport: медиана продаж за 24ч к медиане за 30д − 1."""
+    day = storage.recent_sales("skinport", SalesWindow.H24, since)
+    month = storage.recent_sales("skinport", SalesWindow.D30, since)
+    out: dict[str, Decimal] = {}
+    for name, d in day.items():
+        m = month.get(name)
+        if d.median is None or d.volume < 3 or m is None or not m.median:
+            continue
+        out[name] = d.median / m.median - 1
+    return out
+
+
+def _verify_dmarket_sales(
+    storage: Storage, src: DMarketSource, names: list[str], app_id: int, now: datetime
+) -> None:
+    """Загружает последние сделки DMarket и сохраняет их статистику за 7 дней."""
+    if not names:
+        return
+    typer.echo(f"Проверяю реальные продажи DMarket: {len(names)} предметов (~{len(names)} с)")
+    stats = []
+    for name in names:
+        try:
+            sales = src.fetch_last_sales(name, app_id)
+        except SourceError as exc:
+            typer.echo(f"  {name}: продажи не получены ({exc})", err=True)
+            continue
+        stats.append(stats_from_sales(sales, "dmarket", app_id, name, Currency.USD, now))
+    storage.save_sales(stats)
+
+
 @app.command()
 def scan(
     fetch_first: Annotated[
@@ -407,6 +438,9 @@ def scan(
     min_profit: Annotated[str, typer.Option("--min-profit", help="Мин. прибыль, EUR")] = "0.50",
     min_roi: Annotated[str, typer.Option("--min-roi", help="Мин. ROI, 0.05 = 5%")] = "0.05",
     max_age: Annotated[int, typer.Option("--max-age", help="Макс. возраст цен, мин")] = 30,
+    verify: Annotated[
+        int, typer.Option(help="Сколько кандидатов проверить по реальным сделкам DMarket")
+    ] = 40,
     usd_per_eur: Annotated[
         str | None, typer.Option("--usd-per-eur", help="Курс вручную вместо ЕЦБ")
     ] = None,
@@ -431,7 +465,9 @@ def scan(
     )
     storage = Storage(settings.db_path)
     try:
+        dm: DMarketSource | None = None
         if fetch_first:
+            dm = _dmarket_source(settings)
             try:
                 _fetch_skinport(storage, app_id, sales=True, show=0)
                 names = storage.liquid_names(
@@ -440,24 +476,39 @@ def scan(
                     _decimal(min_price, "--min-price"),
                     _decimal(max_price, "--max-price"),
                 )
-                fee = _fetch_dmarket(storage, _dmarket_source(settings), names, app_id, show=0)
+                fee = _fetch_dmarket(storage, dm, names, app_id, show=0)
             except SourceError as exc:
                 typer.echo(f"Ошибка источника: {exc}", err=True)
                 raise typer.Exit(1) from exc
             if fee is not None:
                 schedule = schedule.with_rules([fee], replace_marketplace="dmarket")
-            typer.echo("")
 
         now = datetime.now(UTC)
         since = now - cfg.max_age
         quotes = {m: storage.recent_quotes(m, since) for m in MARKETS}
-        sales = {
-            m: storage.recent_sales(m, SalesWindow.D7, now - timedelta(hours=6)) for m in MARKETS
-        }
         scanner = Scanner(schedule, fx, cfg)
+        if dm is not None:
+            # Продажу на DMarket подтверждаем реальными сделками: минимальный лот
+            # без сделок может стоять месяцами и не говорит о спросе.
+            check = scanner.candidates(
+                "skinport", "dmarket", quotes["skinport"], quotes["dmarket"], now, verify
+            )
+            open_trades = {
+                t.market_hash_name
+                for t in storage.paper_trades(now - timedelta(days=8))
+                if t.sell_market == "dmarket"
+            }
+            _verify_dmarket_sales(
+                storage, dm, list(dict.fromkeys([*check, *sorted(open_trades)])), app_id, now
+            )
+            typer.echo("")
+
+        stats_since = now - timedelta(hours=6)
+        sales = {m: storage.recent_sales(m, SalesWindow.D7, stats_since) for m in MARKETS}
+        trends = _trends(storage, stats_since)
         found: list[Opportunity] = []
         for buy, sell in (("skinport", "dmarket"), ("dmarket", "skinport")):
-            found += scanner.scan(buy, sell, quotes[buy], quotes[sell], sales[sell], now)
+            found += scanner.scan(buy, sell, quotes[buy], quotes[sell], sales[sell], now, trends)
         found.sort(key=lambda o: (not o.result.complete, -o.result.roi))
         pairs = len(quotes["skinport"].keys() & quotes["dmarket"].keys())
         typer.echo(
@@ -470,8 +521,11 @@ def scan(
             typer.echo("")
             typer.echo(render_opportunity(n, opp))
         if paper and found:
-            recorded = paper_record(storage, found, fx, now)
-            typer.echo(f"\nЗаписано виртуальных сделок: {recorded} (повторы за сутки пропущены)")
+            recorded = paper_record(storage, found, fx, now, ScanConfig())
+            typer.echo(
+                f"\nЗаписано виртуальных сделок: {recorded} "
+                "(только по стандартным порогам, повторы за сутки пропущены)"
+            )
     finally:
         storage.close()
     typer.echo(

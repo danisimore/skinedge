@@ -15,7 +15,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from skinedge.money import Currency
-from skinedge.paper import PaperTrade
+from skinedge.paper import MODEL, PaperTrade
 from skinedge.quotes import Quote, QuoteKind, SalesStats, SalesWindow
 
 SCHEMA = """
@@ -74,7 +74,8 @@ CREATE TABLE IF NOT EXISTS paper_trades (
     roi TEXT NOT NULL,
     usd_per_eur TEXT,
     complete INTEGER NOT NULL,
-    lock_days INTEGER NOT NULL
+    lock_days INTEGER NOT NULL,
+    model INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS paper_route ON paper_trades (market_hash_name, buy_market, sell_market);
 """
@@ -119,12 +120,15 @@ class Storage:
     def _migrate(self) -> None:
         """Обновляет базу, созданную прежними версиями."""
         columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(quotes)")}
+        paper_columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(paper_trades)")}
         version = self.conn.execute("PRAGMA user_version").fetchone()[0]
         with self._tx() as c:
             if "best_bid" not in columns:
                 c.execute("ALTER TABLE quotes ADD COLUMN best_bid TEXT")
             if "bid_quantity" not in columns:
                 c.execute("ALTER TABLE quotes ADD COLUMN bid_quantity INTEGER")
+            if "model" not in paper_columns:
+                c.execute("ALTER TABLE paper_trades ADD COLUMN model INTEGER NOT NULL DEFAULT 1")
             if version < 1:
                 # Версия 50d50f5 записывала цены DMarket в центах как доллары (×100).
                 c.execute("DELETE FROM quotes WHERE source = 'dmarket'")
@@ -314,8 +318,8 @@ class Storage:
             cur = c.execute(
                 "INSERT INTO paper_trades (created_at, app_id, market_hash_name, buy_market,"
                 " sell_market, buy_price, buy_currency, sell_price, sell_currency, cost_eur,"
-                " proceeds_eur, profit_eur, roi, usd_per_eur, complete, lock_days)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " proceeds_eur, profit_eur, roi, usd_per_eur, complete, lock_days, model)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     _t(trade.created_at),
                     trade.app_id,
@@ -333,15 +337,17 @@ class Storage:
                     _d(trade.usd_per_eur),
                     int(trade.complete),
                     trade.lock_days,
+                    trade.model,
                 ),
             )
         return int(cur.lastrowid or 0)
 
-    def paper_trades(self, since: datetime | None = None) -> list[PaperTrade]:
-        """Виртуальные сделки, старые первыми."""
+    def paper_trades(self, since: datetime | None = None, model: int = MODEL) -> list[PaperTrade]:
+        """Виртуальные сделки текущей модели оценки, старые первыми."""
         cur = self.conn.execute(
-            "SELECT * FROM paper_trades WHERE created_at >= ? ORDER BY created_at, id",
-            (_t(since) or "",),
+            "SELECT * FROM paper_trades WHERE created_at >= ? AND model = ?"
+            " ORDER BY created_at, id",
+            (_t(since) or "", model),
         )
         return [
             PaperTrade(
@@ -362,6 +368,7 @@ class Storage:
                 usd_per_eur=_pd(r["usd_per_eur"]),
                 complete=bool(r["complete"]),
                 lock_days=r["lock_days"],
+                model=r["model"],
             )
             for r in cur
         ]
@@ -372,8 +379,8 @@ class Storage:
         """Когда последний раз записана виртуальная сделка по этому маршруту."""
         row = self.conn.execute(
             "SELECT MAX(created_at) FROM paper_trades WHERE market_hash_name = ?"
-            " AND buy_market = ? AND sell_market = ?",
-            (market_hash_name, buy_market, sell_market),
+            " AND buy_market = ? AND sell_market = ? AND model = ?",
+            (market_hash_name, buy_market, sell_market, MODEL),
         ).fetchone()
         return None if row[0] is None else _ptr(row[0])
 

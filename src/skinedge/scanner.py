@@ -13,14 +13,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from decimal import Decimal
+from decimal import ROUND_FLOOR, Decimal
 from urllib.parse import quote as urlquote
 
 from skinedge.fees.schedule import FeeSchedule
 from skinedge.finance.route import RouteCalculator, RouteResult
 from skinedge.fx import FxRates
 from skinedge.money import Currency, Money
-from skinedge.quotes import Quote, QuoteKind, SalesStats
+from skinedge.quotes import Quote, QuoteKind, Sale, SalesStats, SalesWindow
 
 UNDERCUT = Decimal("0.01")  # выставляем на цент дешевле текущего минимума
 _PHASED = ("Doppler", "Gamma Doppler")
@@ -34,9 +34,11 @@ class ScanConfig:
         min_profit: Минимальная чистая прибыль в EUR.
         min_roi: Минимальный ROI (0.05 = 5%).
         max_age: Котировки старше этого не используются.
-        min_sales_7d: Минимум продаж за 7 дней на площадке продажи (если есть статистика).
-        min_sell_listings: Минимум лотов на площадке продажи без статистики продаж.
+        min_sales_7d: Минимум продаж за 7 дней на площадке продажи.
+        min_sell_listings: Минимум лотов для предварительного отбора без статистики продаж.
         suspicious_roi: ROI выше этого помечается как подозрительный.
+        falling: Падение медианы за 24 часа относительно 30 дней, после которого
+            предмет помечается как дешевеющий (0.05 = 5%).
     """
 
     min_profit: Decimal = Decimal("0.50")
@@ -45,6 +47,7 @@ class ScanConfig:
     min_sales_7d: int = 5
     min_sell_listings: int = 5
     suspicious_roi: Decimal = Decimal("0.40")
+    falling: Decimal = Decimal("0.05")
 
 
 @dataclass(frozen=True)
@@ -61,14 +64,25 @@ class SellEstimate:
 
 
 def estimate_sell(
-    quote: Quote | None, sales_7d: SalesStats | None, cfg: ScanConfig
+    quote: Quote | None,
+    sales_7d: SalesStats | None,
+    cfg: ScanConfig,
+    *,
+    require_sales: bool = True,
 ) -> SellEstimate | None:
     """Консервативная цена продажи на площадке.
 
-    Берётся минимальное предложение минус цент. Если есть статистика продаж
-    за 7 дней, цена не выше медианы реальных сделок, а продаж должно быть не
-    меньше ``min_sales_7d``. Без статистики нужно не меньше ``min_sell_listings``
-    лотов, иначе спрос не подтверждён.
+    Берётся минимальное предложение минус цент, но не выше медианы реальных
+    продаж за 7 дней. Продаж за 7 дней должно быть не меньше ``min_sales_7d``:
+    без подтверждённых сделок цена лота ничего не говорит о спросе.
+
+    Args:
+        quote: Котировка площадки продажи.
+        sales_7d: Статистика продаж за 7 дней.
+        cfg: Пороги.
+        require_sales: ``False`` даёт предварительную оценку без статистики продаж
+            (верхняя граница цены): по ней отбираются предметы, чьи продажи стоит
+            проверить. В отчёт и в виртуальные сделки такая оценка не попадает.
 
     Returns:
         Оценка или ``None``, если продать уверенно нельзя.
@@ -78,22 +92,55 @@ def estimate_sell(
     ask = quote.min_price - UNDERCUT
     if ask <= 0:
         return None
-    if sales_7d is not None:
-        if sales_7d.volume < cfg.min_sales_7d or sales_7d.median is None:
+    median = sales_7d.median if sales_7d is not None else None
+    if sales_7d is None or median is None or sales_7d.volume < cfg.min_sales_7d:
+        if require_sales or quote.quantity < cfg.min_sell_listings:
             return None
-        if sales_7d.median < ask:
-            return SellEstimate(
-                Money.of(sales_7d.median, quote.currency),
-                f"медиана продаж 7д, {sales_7d.volume} шт.",
-            )
+        return SellEstimate(Money.of(ask, quote.currency), "предварительно: минимум лотов −0.01")
+    if median < ask:
         return SellEstimate(
-            Money.of(ask, quote.currency), f"минимум лотов −0.01, продаж 7д {sales_7d.volume}"
+            Money.of(median, quote.currency), f"медиана продаж 7д, {sales_7d.volume} шт."
         )
-    if quote.quantity < cfg.min_sell_listings:
-        return None
     return SellEstimate(
-        Money.of(ask, quote.currency),
-        f"минимум лотов −0.01, лотов {quote.quantity}, статистики продаж нет",
+        Money.of(ask, quote.currency), f"минимум лотов −0.01, продаж 7д {sales_7d.volume}"
+    )
+
+
+def stats_from_sales(
+    sales: list[Sale],
+    source: str,
+    app_id: int,
+    name: str,
+    currency: Currency,
+    now: datetime,
+    window: SalesWindow = SalesWindow.D7,
+) -> SalesStats:
+    """Статистика продаж за окно по списку отдельных сделок.
+
+    Используется для площадок, которые отдают сделки, а не сводку (DMarket).
+    Если площадка отдаёт ограниченное число последних сделок, ``volume`` —
+    нижняя граница настоящего числа продаж.
+    """
+    days = {SalesWindow.H24: 1, SalesWindow.D7: 7, SalesWindow.D30: 30, SalesWindow.D90: 90}
+    since = now - timedelta(days=days[window])
+    prices = sorted(s.price for s in sales if s.sold_at >= since and s.currency == currency)
+    median = None
+    if prices:
+        mid = len(prices) // 2
+        median = prices[mid] if len(prices) % 2 else (prices[mid - 1] + prices[mid]) / 2
+        median = median.quantize(Decimal("0.01"), ROUND_FLOOR)
+    return SalesStats(
+        source=source,
+        app_id=app_id,
+        market_hash_name=name,
+        currency=currency,
+        window=window,
+        min=prices[0] if prices else None,
+        max=prices[-1] if prices else None,
+        avg=(sum(prices, Decimal(0)) / len(prices)).quantize(Decimal("0.01")) if prices else None,
+        median=median,
+        volume=len(prices),
+        fetched_at=now,
     )
 
 
@@ -144,6 +191,7 @@ class Scanner:
         sell_quotes: dict[str, Quote],
         sell_sales: dict[str, SalesStats],
         now: datetime,
+        trends: dict[str, Decimal] | None = None,
     ) -> list[Opportunity]:
         """Ищет выгодные маршруты ``buy_market → sell_market``.
 
@@ -154,6 +202,7 @@ class Scanner:
             sell_quotes: Котировки площадки продажи по названию.
             sell_sales: Статистика продаж за 7 дней на площадке продажи.
             now: Текущее время (для проверки свежести).
+            trends: Изменение цены предмета (медиана 24ч к медиане 30д − 1).
 
         Returns:
             Возможности, прошедшие пороги: сначала полные расчёты, затем по ROI.
@@ -184,17 +233,59 @@ class Scanner:
                     sell_quote=sq,
                     sell=sell,
                     result=result,
-                    flags=self._flags(name, bq, result),
+                    flags=self._flags(name, bq, result, (trends or {}).get(name)),
                     buy_url=self._url(buy_market, name, bq),
                     sell_url=self._url(sell_market, name, sq),
                 )
             )
         return sorted(found, key=lambda o: (not o.result.complete, -o.result.roi))
 
-    def _flags(self, name: str, buy: Quote, result: RouteResult) -> list[str]:
+    def candidates(
+        self,
+        buy_market: str,
+        sell_market: str,
+        buy_quotes: dict[str, Quote],
+        sell_quotes: dict[str, Quote],
+        now: datetime,
+        limit: int,
+    ) -> list[str]:
+        """Предметы, у которых стоит проверить реальные продажи на площадке продажи.
+
+        Цена продажи берётся предварительно, по минимальному лоту без статистики.
+        Это верхняя граница: медиана продаж может её только понизить. Поэтому
+        предмет, невыгодный даже по такой цене, проверять не нужно.
+
+        Returns:
+            До ``limit`` названий, самые выгодные по предварительной оценке первыми.
+        """
+        scored: list[tuple[Decimal, str]] = []
+        min_profit = Money.of(self.cfg.min_profit, Currency.EUR)
+        for name in buy_quotes.keys() & sell_quotes.keys():
+            bq, sq = buy_quotes[name], sell_quotes[name]
+            if bq.min_price is None or bq.quantity < 1:
+                continue
+            if now - bq.fetched_at > self.cfg.max_age or now - sq.fetched_at > self.cfg.max_age:
+                continue
+            sell = estimate_sell(sq, None, self.cfg, require_sales=False)
+            if sell is None:
+                continue
+            calc = RouteCalculator(self.schedule, self.fx, buy_market, sell_market, item=name)
+            cost = calc.purchase(Money.of(bq.min_price, bq.currency)).total
+            profit = calc.sale(sell.price).total - cost
+            if profit >= min_profit and profit.amount >= cost.amount * self.cfg.min_roi:
+                scored.append((profit.amount / cost.amount, name))
+        return [name for _, name in sorted(scored, reverse=True)[:limit]]
+
+    def _flags(
+        self, name: str, buy: Quote, result: RouteResult, trend: Decimal | None
+    ) -> list[str]:
         flags = []
         if not result.complete:
             flags.append("Расчёт неполный: есть неизвестные комиссии")
+        if trend is not None and trend <= -self.cfg.falling:
+            flags.append(
+                f"Цена падает: медиана Skinport за 24ч на {-trend * 100:.1f}% ниже, чем за 30 дней"
+            )
         if result.roi > self.cfg.suspicious_roi:
             flags.append(
                 "ROI подозрительно высокий: проверь лот вручную (наклейки, паттерн, float)"

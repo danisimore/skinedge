@@ -37,6 +37,11 @@ CHECKPOINTS: tuple[tuple[str, timedelta], ...] = (
 )
 COOLDOWN = timedelta(hours=24)  # один и тот же маршрут записываем не чаще раза в сутки
 
+# Версия модели оценки. Сделки старой модели остаются в базе, но не входят в отчёт:
+# модель 1 оценивала продажу на DMarket по минимальному лоту без проверки реальных
+# сделок и находила ложные возможности.
+MODEL = 2
+
 
 class PaperTrade(BaseModel):
     """Виртуальная сделка в момент сигнала. Суммы в EUR уже с комиссиями."""
@@ -60,6 +65,7 @@ class PaperTrade(BaseModel):
     usd_per_eur: Decimal | None
     complete: bool
     lock_days: int
+    model: int = MODEL
 
     @classmethod
     def from_opportunity(cls, opp: Opportunity, fx: FxRates, now: datetime) -> PaperTrade:
@@ -85,14 +91,27 @@ class PaperTrade(BaseModel):
         )
 
 
-def record(storage: Storage, opportunities: list[Opportunity], fx: FxRates, now: datetime) -> int:
+def record(
+    storage: Storage,
+    opportunities: list[Opportunity],
+    fx: FxRates,
+    now: datetime,
+    floor: ScanConfig,
+) -> int:
     """Записывает новые возможности, пропуская маршруты, записанные за последние сутки.
+
+    Записываются только возможности, прошедшие пороги ``floor`` (стандартные
+    пороги сканера). Так прогоны с пониженными порогами для диагностики не
+    засоряют статистику.
 
     Returns:
         Сколько сделок записано.
     """
     count = 0
     for opp in opportunities:
+        r = opp.result
+        if r.roi < floor.min_roi or r.profit.amount < floor.min_profit:
+            continue
         last = storage.last_paper(opp.name, opp.result.buy_market, opp.result.sell_market)
         if last is not None and now - last < COOLDOWN:
             continue
