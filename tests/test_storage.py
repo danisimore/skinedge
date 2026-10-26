@@ -133,3 +133,29 @@ def test_liquid_names_uses_latest_fetch_and_price_range() -> None:
     s.save_quotes(new)
     assert s.liquid_names("skinport", 10, max_price=Decimal("500")) == ["b", "a"]
     assert s.liquid_names("skinport", 1) == ["c"]
+
+
+def test_migration_drops_bad_dmarket_rows(tmp_path: Path) -> None:
+    import sqlite3
+
+    db = tmp_path / "v0.db"
+    s = Storage(db)
+    s.close()
+    conn = sqlite3.connect(db)
+    conn.execute("PRAGMA user_version = 0")
+    conn.commit()
+    conn.close()
+    s = Storage(db)
+    bad = quote("2468", T0, source="dmarket")
+    s.save_quotes([bad])
+    s.close()
+    conn = sqlite3.connect(db)
+    conn.execute("PRAGMA user_version = 0")
+    conn.commit()
+    conn.close()
+    s = Storage(db)
+    assert s.latest_quotes(NAME) == []
+    s.save_quotes([quote("24.68", T0, source="dmarket")])
+    s.close()
+    s = Storage(db)  # повторное открытие ничего не удаляет
+    assert s.latest_quotes(NAME)[0].min_price == Decimal("24.68")

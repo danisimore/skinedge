@@ -94,13 +94,18 @@ class Storage:
         self._migrate()
 
     def _migrate(self) -> None:
-        """Добавляет колонки, появившиеся после создания базы."""
+        """Обновляет базу, созданную прежними версиями."""
         columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(quotes)")}
+        version = self.conn.execute("PRAGMA user_version").fetchone()[0]
         with self._tx() as c:
             if "best_bid" not in columns:
                 c.execute("ALTER TABLE quotes ADD COLUMN best_bid TEXT")
             if "bid_quantity" not in columns:
                 c.execute("ALTER TABLE quotes ADD COLUMN bid_quantity INTEGER")
+            if version < 1:
+                # Версия 50d50f5 записывала цены DMarket в центах как доллары (×100).
+                c.execute("DELETE FROM quotes WHERE source = 'dmarket'")
+                c.execute("PRAGMA user_version = 1")
 
     def close(self) -> None:
         """Закрывает соединение."""

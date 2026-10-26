@@ -1,8 +1,8 @@
 """Тесты адаптера DMarket.
 
-Ответы собраны по схемам из https://docs.dmarket.com/v1/swagger.html; живые
-ответы из среды разработки недоступны. Единицы Amount проверяются отдельно
-при первом живом запуске.
+Ответы собраны по схемам из https://docs.dmarket.com/v1/swagger.html и сверены
+с живым запуском 26.10.2026: Amount в aggregated-prices — центы строкой, счётчики —
+строки, price в last-sales — доллары.
 """
 
 import json
@@ -84,10 +84,10 @@ PRICES = {
     "aggregatedPrices": [
         {
             "title": "AK-47 | Redline (Field-Tested)",
-            "orderBestPrice": {"Currency": "USD", "Amount": "22.10"},
-            "orderCount": 154,
-            "offerBestPrice": {"Currency": "USD", "Amount": "24.37"},
-            "offerCount": 311,
+            "orderBestPrice": {"Currency": "USD", "Amount": "2210"},
+            "orderCount": "154",
+            "offerBestPrice": {"Currency": "USD", "Amount": "2437"},
+            "offerCount": "311",
         },
         {
             "title": "Sticker | Nobody",
@@ -170,13 +170,15 @@ def test_last_sales_parsed_and_query_signed() -> None:
 
 def test_sell_fees_default_official() -> None:
     data = {
-        "defaultFee": {"fraction": "0.05", "minAmount": 1},
+        "defaultFee": {"fraction": "0.1", "minAmount": 1},
         "reducedFees": [{"title": "X", "fraction": "0.02", "minPrice": 0, "maxPrice": 1}],
     }
-    src, _ = make_source(lambda r: httpx.Response(200, json=data))
+    src, seen = make_source(lambda r: httpx.Response(200, json=data))
     rules = src.fetch_sell_fees()
+    assert len(seen) == 1  # только первая страница
     assert len(rules) == 1  # сниженные ставки пока не применяются
-    assert rules[0].rate == Decimal("0.05")
+    assert rules[0].rate == Decimal("0.1")
+    assert rules[0].min_fee == Decimal("0.01")
     assert rules[0].operation is Operation.SELL
     assert rules[0].verification is Verification.OFFICIAL
 
@@ -185,6 +187,16 @@ def test_sell_fees_missing_default() -> None:
     src, _ = make_source(lambda r: httpx.Response(200, json={"reducedFees": []}))
     with pytest.raises(SourceError):
         src.fetch_sell_fees()
+
+
+def test_cents_format_is_enforced() -> None:
+    bad = {
+        "aggregatedPrices": [
+            {"title": "X", "offerBestPrice": {"Currency": "USD", "Amount": "24.37"}}
+        ]
+    }
+    src, _ = make_source(lambda r: httpx.Response(200, json=bad))
+    assert src.fetch_best_prices(["X"]) == []  # формат изменился: строка пропущена, а не принята
 
 
 def test_unauthorized_not_retried() -> None:

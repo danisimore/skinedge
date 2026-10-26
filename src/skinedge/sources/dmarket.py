@@ -11,11 +11,14 @@
 SkinEdge вызывает только методы чтения: лучшие цены и заявки, историю продаж
 и комиссии. Методов покупки и продажи в адаптере нет.
 
-Неподтверждённое (проверяется при первом живом запуске):
+Единицы сумм проверены живым запуском 26.10.2026 (в документации их нет):
 
-* единицы ``Amount`` в ``aggregated-prices`` (считаем долларами в виде строки "12.34");
-* единицы ``minAmount`` в ``customized-fees`` (пока не учитываем, только логируем);
-* численные лимиты запросов не опубликованы, поэтому берём 1 запрос в секунду.
+* ``aggregated-prices``: ``Amount`` — целые центы USD строкой ("2468" = $24.68);
+* ``last-sales``: ``price`` — доллары строкой ("24.68");
+* ``customized-fees``: ``fraction`` — доля ("0.1" = 10%); ``minAmount`` = 1 считаем
+  одним центом по аналогии с ``Amount``, это не подтверждено.
+
+Численные лимиты запросов не опубликованы, поэтому берём 1 запрос в секунду.
 """
 
 from __future__ import annotations
@@ -97,8 +100,18 @@ class DMarketSigner:
         }
 
 
+def _cents(value: Any) -> Decimal | None:
+    """Разбирает сумму в центах (целое число строкой) и переводит в доллары."""
+    if value is None or value == "":
+        return None
+    text = str(value)
+    if not text.isdigit():
+        raise ValueError(f"ожидались целые центы, получено {value!r}")
+    return Decimal(text) / 100
+
+
 def _amount(value: Any) -> Decimal | None:
-    """Разбирает сумму DMarket. Сейчас ожидается строка в долларах, например "12.34"."""
+    """Разбирает сумму в долларах (строка "24.68")."""
     if value is None or value == "":
         return None
     try:
@@ -116,7 +129,7 @@ def _price_obj(obj: Any) -> Decimal | None:
     currency = obj.get("Currency") or obj.get("currency")
     if currency and currency != "USD":
         raise ValueError(f"валюта {currency}")
-    return _amount(obj.get("Amount", obj.get("amount")))
+    return _cents(obj.get("Amount", obj.get("amount")))
 
 
 class DMarketSource:
@@ -280,7 +293,7 @@ class DMarketSource:
     def fetch_sell_fees(self, app_id: int = 730, offer_type: str = "dmarket") -> list[FeeRule]:
         """Общая комиссия продавца из API.
 
-        Сниженные ставки по отдельным предметам пока не применяются (см. комментарий ниже).
+        Сниженные ставки по отдельным предметам пока не применяются.
 
         Args:
             app_id: Steam app_id игры.
@@ -289,49 +302,32 @@ class DMarketSource:
         Returns:
             Правила комиссий со статусом ``official``.
         """
-        game = self._game(app_id)
-        rules: list[FeeRule] = []
-        reduced: list[Any] = []
-        offset = 0
-        default: Any = None
-        while True:
-            data = self._request(
-                "GET",
-                "/exchange/v1/customized-fees",
-                params={
-                    "gameId": game,
-                    "offerType": offer_type,
-                    "limit": "100",
-                    "offset": str(offset),
-                },
-            )
-            default = default or data.get("defaultFee")
-            page = data.get("reducedFees") or []
-            reduced.extend(page)
-            if len(page) < 100:
-                break
-            offset += 100
+        # defaultFee приходит на первой же странице. Сниженные ставки (их тысячи)
+        # не загружаем: они действуют в диапазоне цен с неподтверждёнными единицами,
+        # а общая ставка выше, поэтому расчёт без них консервативнее.
+        data = self._request(
+            "GET",
+            "/exchange/v1/customized-fees",
+            params={"gameId": self._game(app_id), "offerType": offer_type, "limit": "1"},
+        )
+        default = (data or {}).get("defaultFee")
         if not default or default.get("fraction") is None:
             raise SourceError("DMarket customized-fees: нет defaultFee")
         log.info("DMarket defaultFee (%s): %s", offer_type, default)
-        today = datetime.now(UTC).date()
-        rules.append(
+        min_fee = _cents(default.get("minAmount"))
+        return [
             FeeRule(
                 id=f"dmarket.sell.{offer_type}.default",
                 marketplace=self.name,
                 operation=Operation.SELL,
                 kind=FeeKind.PERCENT,
                 rate=Decimal(str(default["fraction"])),
+                min_fee=min_fee,
                 currency=Currency.USD,
                 verification=Verification.OFFICIAL,
                 source=DOCS_URL,
-                verified_at=today,
-                note=f"Из API customized-fees ({offer_type}); minAmount={default.get('minAmount')}"
-                " не учтён: единицы не подтверждены",
+                verified_at=datetime.now(UTC).date(),
+                note=f"Из API customized-fees ({offer_type}); минимум {min_fee} USD"
+                " (единицы minAmount не подтверждены)",
             )
-        )
-        if reduced:
-            # Сниженные ставки действуют в диапазоне цен minPrice–maxPrice, единицы которого
-            # не подтверждены. Пока их не применяем: общая ставка выше, расчёт консервативнее.
-            log.info("DMarket: %d предметов со сниженной комиссией не учтены", len(reduced))
-        return rules
+        ]
