@@ -1,0 +1,6 @@
+[
+  {"market_hash_name": "AK-47 | Redline (Field-Tested)", "currency": "EUR", "suggested_price": 31.5, "item_page": "https://skinport.com/item/csgo/ak-47-redline-field-tested", "market_page": "https://skinport.com/market/730?cat=Rifle&item=Redline&type=AK-47", "min_price": 28.14, "max_price": 412.0, "mean_price": 39.87, "median_price": 30.9, "quantity": 412, "created_at": 1535988253, "updated_at": 1793030000},
+  {"market_hash_name": "★ Karambit | Doppler (Factory New)", "currency": "EUR", "suggested_price": 1250.0, "item_page": "https://skinport.com/item/csgo/karambit-doppler-factory-new", "market_page": "https://skinport.com/market/730?item=Doppler&type=Karambit", "min_price": 1101.49, "max_price": 3999.99, "mean_price": 1600.12, "median_price": 1380, "quantity": 37, "created_at": 1535988302, "updated_at": 1793029900},
+  {"market_hash_name": "Sticker | Rare Example", "currency": "EUR", "suggested_price": 0.03, "item_page": "https://skinport.com/item/csgo/sticker-rare-example", "market_page": "https://skinport.com/market/730?item=Rare", "min_price": null, "max_price": null, "mean_price": null, "median_price": null, "quantity": 0, "created_at": 1535988302, "updated_at": 1793000000},
+  {"market_hash_name": "Broken Row", "currency": "EUR", "min_price": "oops", "quantity": 1, "updated_at": 1793000000}
+]

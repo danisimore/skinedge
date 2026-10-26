@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Annotated
 
@@ -13,6 +15,10 @@ from skinedge.fees.schedule import FeeSchedule, Payout
 from skinedge.finance.route import BALANCE, FeeLine, RouteCalculator, RouteResult
 from skinedge.fx import FxRates
 from skinedge.money import Currency, Money
+from skinedge.quotes import Quote
+from skinedge.sources.base import SourceError
+from skinedge.sources.skinport import SkinportSource
+from skinedge.storage import Storage
 
 app = typer.Typer(help="SkinEdge: анализ арбитража игровых предметов. Только анализ, без сделок.")
 
@@ -140,3 +146,98 @@ def list_rules() -> None:
                     f"  {op.value}{method}: {rule.describe()}  "
                     f"({rule.verification.value}, {rule.verified_at or 'дата не указана'})"
                 )
+
+
+def _age(quote: Quote, now: datetime) -> str:
+    minutes = int(quote.age(now).total_seconds() // 60)
+    return f"{minutes} мин назад"
+
+
+@app.command()
+def fetch(
+    source: Annotated[str, typer.Argument(help="Источник: skinport")] = "skinport",
+    app_id: Annotated[int, typer.Option("--app-id", help="Steam app_id (730 = CS2)")] = 730,
+    sales: Annotated[bool, typer.Option(help="Также загрузить статистику продаж")] = True,
+    show: Annotated[int, typer.Option(help="Сколько примеров показать")] = 5,
+    verbose: Annotated[bool, typer.Option("--verbose", "-v")] = False,
+) -> None:
+    """Загружает реальные цены с площадки и сохраняет их в историю."""
+    logging.basicConfig(level=logging.INFO if verbose else logging.WARNING)
+    if source != "skinport":
+        raise typer.BadParameter("Пока поддерживается только skinport")
+    settings = Settings()
+    storage = Storage(settings.db_path)
+    src = SkinportSource()
+    try:
+        quotes = src.fetch_quotes(app_id)
+        n_quotes = storage.save_quotes(quotes)
+        n_sales = storage.save_sales(src.fetch_sales(app_id)) if sales else 0
+    except SourceError as exc:
+        typer.echo(f"Ошибка источника: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    finally:
+        storage.close()
+
+    listed = [q for q in quotes if q.min_price is not None and q.quantity > 0]
+    now = datetime.now(UTC)
+    typer.echo(f"Skinport, app_id={app_id}: {n_quotes} предметов, из них с лотами {len(listed)}")
+    typer.echo(f"Статистика продаж: {n_sales} записей")
+    typer.echo(f"База: {settings.db_path}")
+    if listed:
+        newest = max(q.source_updated_at or q.fetched_at for q in listed)
+        typer.echo(f"Самое свежее обновление на площадке: {newest:%Y-%m-%d %H:%M} UTC")
+    top = sorted(listed, key=lambda q: q.quantity, reverse=True)[:show]
+    if top:
+        typer.echo("\nСамые ликвидные по числу лотов:")
+    for q in top:
+        typer.echo(
+            f"  {q.market_hash_name}: от {q.min_price} {q.currency.value}, "
+            f"лотов {q.quantity}, обновлено {_age(q, now)}"
+        )
+
+
+@app.command()
+def item(
+    name: Annotated[str, typer.Argument(help="Точное или частичное название предмета")],
+    max_age_min: Annotated[int, typer.Option("--max-age", help="Допустимый возраст, мин")] = 15,
+) -> None:
+    """Показывает последние сохранённые цены и продажи предмета."""
+    settings = Settings()
+    storage = Storage(settings.db_path)
+    try:
+        quotes = storage.latest_quotes(name)
+        if not quotes:
+            matches = storage.search_names(name)
+            if len(matches) == 1:
+                name = matches[0]
+                quotes = storage.latest_quotes(name)
+            elif matches:
+                typer.echo("Найдено несколько предметов, уточни название:")
+                for m in matches:
+                    typer.echo(f"  {m}")
+                return
+        if not quotes:
+            typer.echo("Нет данных. Сначала выполни: skinedge fetch skinport")
+            raise typer.Exit(1)
+        now = datetime.now(UTC)
+        typer.echo(name)
+        for q in quotes:
+            stale = " УСТАРЕЛО" if q.is_stale(now, timedelta(minutes=max_age_min)) else ""
+            price = f"{q.min_price} {q.currency.value}" if q.min_price is not None else "нет лотов"
+            typer.echo(
+                f"  {q.source}: от {price}, лотов {q.quantity}, "
+                f"обновлено {_age(q, now)}{stale} ({q.kind.value})"
+            )
+            if q.url:
+                typer.echo(f"    {q.url}")
+            for st in storage.latest_sales(name, q.source):
+                version = f" [{st.version}]" if st.version else ""
+                if st.volume:
+                    typer.echo(
+                        f"    продажи {st.window.value}{version}: {st.volume} шт., "
+                        f"медиана {st.median}, мин {st.min}, макс {st.max}"
+                    )
+                else:
+                    typer.echo(f"    продажи {st.window.value}{version}: нет")
+    finally:
+        storage.close()

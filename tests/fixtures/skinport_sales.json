@@ -1,0 +1,12 @@
+[
+  {"market_hash_name": "AK-47 | Redline (Field-Tested)", "version": null, "currency": "EUR", "item_page": "https://skinport.com/item/csgo/ak-47-redline-field-tested", "market_page": "https://skinport.com/market/730?item=Redline",
+   "last_24_hours": {"min": 28.5, "max": 33.1, "avg": 30.12, "median": 30.05, "volume": 57},
+   "last_7_days": {"min": 27.9, "max": 35.0, "avg": 30.4, "median": 30.2, "volume": 402},
+   "last_30_days": {"min": 26.0, "max": 36.2, "avg": 30.8, "median": 30.6, "volume": 1630},
+   "last_90_days": {"min": 25.1, "max": 40.0, "avg": 31.0, "median": 30.7, "volume": 4801}},
+  {"market_hash_name": "★ Karambit | Doppler (Factory New)", "version": "Phase 2", "currency": "EUR", "item_page": "x", "market_page": "y",
+   "last_24_hours": {"min": null, "max": null, "avg": null, "median": null, "volume": 0},
+   "last_7_days": {"min": 1290.0, "max": 1310.0, "avg": 1300.0, "median": 1300.0, "volume": 2},
+   "last_30_days": {"min": 1200.0, "max": 1400.0, "avg": 1300.0, "median": 1295.0, "volume": 9},
+   "last_90_days": {"min": 1100.0, "max": 1500.0, "avg": 1310.0, "median": 1300.0, "volume": 30}}
+]

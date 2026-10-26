@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     """Настройки SkinEdge. Все переменные имеют префикс ``SKINEDGE_``.
 
     Attributes:
+        db_path: Файл базы SQLite с историей цен.
         fee_rules_path: Свой файл правил комиссий вместо встроенного.
         fx_spread: Потери при конвертации валют (доля).
         csfloat_api_key: Ключ CSFloat API (понадобится на этапе 3).
@@ -22,6 +23,7 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="SKINEDGE_", env_file=".env", extra="ignore")
 
+    db_path: Path = Path("data/skinedge.db")
     fee_rules_path: Path | None = None
     fx_spread: Decimal = Decimal("0.01")
     csfloat_api_key: SecretStr | None = None
