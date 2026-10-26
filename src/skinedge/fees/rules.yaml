@@ -31,6 +31,8 @@ marketplaces:
     # Баланс от продажи заблокирован 7 дней (Trade Protection).
     settlement_days: 7
     item_url: "https://dmarket.com/ingame-items/item-list/csgo-skins?title={name}"
+    # Способ вывода для расчёта; другой задаётся в .env: SKINEDGE_DMARKET_WITHDRAW=sepa
+    withdraw_method: visa
   steam:
     # Валюта кошелька пользователя; для Финляндии EUR.
     currency: EUR
@@ -188,14 +190,176 @@ rules:
     verification: unknown
     note: "Комиссии пополнения не найдены"
 
-  - id: dmarket.withdraw.any
+  # Вывод: экран «Выберите способ вывода средств» в аккаунте пользователя, 26.10.2026.
+  # Фиксированная часть берётся за каждый вывод; SkinEdge относит её к каждой продаже
+  # целиком, как будто каждая продажа выводится отдельно (худший случай).
+  - id: dmarket.withdraw.visa
     marketplace: dmarket
     operation: withdraw
+    method: visa
+    kind: percent
+    rate: "0.0075"
+    currency: USD
+    verification: account
+    source: "Аккаунт DMarket, экран вывода средств"
+    verified_at: 2026-10-26
+    note: "Visa, до 1500 USD за транзакцию"
+
+  - id: dmarket.withdraw.visa.fixed
+    marketplace: dmarket
+    operation: withdraw
+    method: visa
+    kind: fixed
+    fixed: "0.35"
+    currency: USD
+    verification: account
+    source: "Аккаунт DMarket, экран вывода средств"
+    verified_at: 2026-10-26
+    note: "Visa, до 1500 USD за транзакцию"
+
+  - id: dmarket.withdraw.sepa
+    marketplace: dmarket
+    operation: withdraw
+    method: sepa
+    kind: fixed
+    fixed: "6.34"
+    currency: USD
+    verification: account
+    source: "Аккаунт DMarket, экран вывода средств"
+    verified_at: 2026-10-26
+    note: "SEPA, до 3500 USD за транзакцию"
+
+  - id: dmarket.withdraw.payoneer
+    marketplace: dmarket
+    operation: withdraw
+    method: payoneer
     kind: percent
     rate: "0"
     currency: USD
-    verification: unknown
-    note: "Способы и комиссии вывода (крипта, банк, PayPal) не найдены"
+    verification: account
+    source: "Аккаунт DMarket, экран вывода средств"
+    verified_at: 2026-10-26
+    note: "Payoneer, до 1000 USD за транзакцию"
+
+  - id: dmarket.withdraw.bitcoin
+    marketplace: dmarket
+    operation: withdraw
+    method: bitcoin
+    kind: percent
+    rate: "0.015"
+    currency: USD
+    verification: account
+    source: "Аккаунт DMarket, экран вывода средств"
+    verified_at: 2026-10-26
+    note: "Bitcoin, до 3500 USD за транзакцию"
+
+  - id: dmarket.withdraw.usdc
+    marketplace: dmarket
+    operation: withdraw
+    method: usdc
+    kind: percent
+    rate: "0.015"
+    currency: USD
+    verification: account
+    source: "Аккаунт DMarket, экран вывода средств"
+    verified_at: 2026-10-26
+    note: "USD Coin (Base, Ethereum, Solana), до 3500 USD за транзакцию"
+
+  - id: dmarket.withdraw.neteller
+    marketplace: dmarket
+    operation: withdraw
+    method: neteller
+    kind: percent
+    rate: "0.021"
+    currency: USD
+    verification: account
+    source: "Аккаунт DMarket, экран вывода средств"
+    verified_at: 2026-10-26
+    note: "Neteller, до 500 USD за транзакцию"
+
+  - id: dmarket.withdraw.litecoin
+    marketplace: dmarket
+    operation: withdraw
+    method: litecoin
+    kind: percent
+    rate: "0.02"
+    currency: USD
+    verification: account
+    source: "Аккаунт DMarket, экран вывода средств"
+    verified_at: 2026-10-26
+    note: "Litecoin, до 3500 USD за транзакцию"
+
+  - id: dmarket.withdraw.ethereum
+    marketplace: dmarket
+    operation: withdraw
+    method: ethereum
+    kind: percent
+    rate: "0.02"
+    currency: USD
+    verification: account
+    source: "Аккаунт DMarket, экран вывода средств"
+    verified_at: 2026-10-26
+    note: "Ethereum, до 3500 USD за транзакцию"
+
+  - id: dmarket.withdraw.check
+    marketplace: dmarket
+    operation: withdraw
+    method: check
+    kind: fixed
+    fixed: "3.8"
+    currency: USD
+    verification: account
+    source: "Аккаунт DMarket, экран вывода средств"
+    verified_at: 2026-10-26
+    note: "чек через Tipalti, до 3500 USD за транзакцию"
+
+  - id: dmarket.withdraw.paypal
+    marketplace: dmarket
+    operation: withdraw
+    method: paypal
+    kind: percent
+    rate: "0.02"
+    currency: USD
+    verification: account
+    source: "Аккаунт DMarket, экран вывода средств"
+    verified_at: 2026-10-26
+    note: "PayPal через Tipalti, до 3500 USD за транзакцию"
+
+  - id: dmarket.withdraw.paypal.fixed
+    marketplace: dmarket
+    operation: withdraw
+    method: paypal
+    kind: fixed
+    fixed: "3.3"
+    currency: USD
+    verification: account
+    source: "Аккаунт DMarket, экран вывода средств"
+    verified_at: 2026-10-26
+    note: "PayPal через Tipalti, до 3500 USD за транзакцию"
+
+  - id: dmarket.withdraw.swift
+    marketplace: dmarket
+    operation: withdraw
+    method: swift
+    kind: fixed
+    fixed: "32.97"
+    currency: USD
+    verification: account
+    source: "Аккаунт DMarket, экран вывода средств"
+    verified_at: 2026-10-26
+    note: "SWIFT, до 3500 USD за транзакцию"
+
+  - id: dmarket.withdraw.skrill
+    marketplace: dmarket
+    operation: withdraw
+    method: skrill
+    kind: percent
+    rate: "0.011"
+    currency: USD
+    verification: account
+    source: "Аккаунт DMarket, экран вывода средств"
+    verified_at: 2026-10-26
+    note: "Skrill, до 2000 USD за транзакцию"
 
   # ---------- Steam Community Market ----------
   - id: steam.buy

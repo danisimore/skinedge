@@ -17,6 +17,7 @@ class Settings(BaseSettings):
         log_path: Лог фонового запуска ``skinedge run``.
         fee_rules_path: Свой файл правил комиссий вместо встроенного.
         fx_spread: Потери при конвертации валют (доля).
+        dmarket_withdraw: Способ вывода с DMarket вместо заданного в правилах (visa, sepa...).
         csfloat_api_key: Ключ CSFloat API (после первой сделки на CSFloat).
         dmarket_public_key: Публичный ключ DMarket Trading API.
         dmarket_secret_key: Секретный ключ DMarket Trading API.
@@ -33,6 +34,7 @@ class Settings(BaseSettings):
     log_path: Path = Path("logs/skinedge.log")
     fee_rules_path: Path | None = None
     fx_spread: Decimal = Decimal("0.01")
+    dmarket_withdraw: str | None = None
     csfloat_api_key: SecretStr | None = Field(
         None, validation_alias=AliasChoices("SKINEDGE_CSFLOAT_API_KEY", "SKINEDGE_CSFLOAT_KEY")
     )

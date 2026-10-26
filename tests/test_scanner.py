@@ -166,9 +166,10 @@ def test_dmarket_to_skinport_full_calculation() -> None:
     assert "медиана" in found[0].sell.basis
 
 
-def test_skinport_to_dmarket_incomplete_withdraw() -> None:
-    # 14.00 USD − 10% = 12.60 USD → 12.60/1.10·0.99 = 11.34 EUR (вниз). Вывод DMarket неизвестен.
-    found = scanner().scan(
+def test_skinport_to_dmarket_with_withdraw() -> None:
+    # 14.00 USD − 10% = 12.60 USD; вывод Visa 0.75% (0.09) + 0.35 → 12.16 USD
+    # → 12.16/1.10·0.99 = 10.94 EUR (вниз).
+    args = (
         "skinport",
         "dmarket",
         {NAME: q("skinport", "10.00")},
@@ -176,11 +177,18 @@ def test_skinport_to_dmarket_incomplete_withdraw() -> None:
         {NAME: stats("20", 8, source="dmarket")},
         NOW,
     )
+    found = scanner().scan(*args)
     r = found[0].result
-    assert r.net_proceeds == Money.of("11.34", Currency.EUR)
-    assert r.profit == Money.of("1.34", Currency.EUR)
-    assert not r.complete
-    assert any("неполный" in f for f in found[0].flags)
+    assert r.net_proceeds == Money.of("10.94", Currency.EUR)
+    assert r.profit == Money.of("0.94", Currency.EUR)
+    assert r.complete
+    assert not any("неполный" in f for f in found[0].flags)
+
+    # SEPA: 6.34 USD с каждой продажи съедает всю прибыль.
+    sepa = Scanner(FeeSchedule.load().with_withdraw("dmarket", "sepa"), FX, CFG)
+    assert sepa.scan(*args) == []
+    with pytest.raises(ValueError, match="mir"):
+        FeeSchedule.load().with_withdraw("dmarket", "mir")
 
 
 def test_thresholds_and_staleness() -> None:

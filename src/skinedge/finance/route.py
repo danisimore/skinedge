@@ -146,7 +146,9 @@ class RouteCalculator:
         self.item = item
         if self.sell.payout is Payout.CASH and withdraw_method is None:
             methods = schedule.methods(sell_market, Operation.WITHDRAW)
-            self.withdraw_method = methods[0] if len(methods) == 1 else None
+            self.withdraw_method = self.sell.withdraw_method or (
+                methods[0] if len(methods) == 1 else None
+            )
 
     # ---------- стороны маршрута ----------
 

@@ -71,6 +71,18 @@ def _print_lines(title: str, lines: list[FeeLine]) -> None:
         typer.echo(f"  - {line.label}: база {line.base} → {line.amount}{mark}")
 
 
+def _schedule(settings: Settings) -> FeeSchedule:
+    """Правила комиссий с учётом выбранного способа вывода DMarket."""
+    schedule = FeeSchedule.load(settings.fee_rules_path)
+    if settings.dmarket_withdraw:
+        try:
+            schedule = schedule.with_withdraw("dmarket", settings.dmarket_withdraw)
+        except ValueError as exc:
+            typer.echo(f"SKINEDGE_DMARKET_WITHDRAW: {exc}", err=True)
+            raise typer.Exit(1) from exc
+    return schedule
+
+
 def render(result: RouteResult) -> str:
     """Текстовый отчёт по маршруту."""
     kind = "деньги" if result.payout is Payout.CASH else "Steam Wallet (не выводится)"
@@ -114,7 +126,7 @@ def fees(
 ) -> None:
     """Считает комиссии, прибыль, ROI и безубыточность для одного маршрута."""
     settings = Settings()
-    schedule = FeeSchedule.load(settings.fee_rules_path)
+    schedule = _schedule(settings)
     buy_ccy = schedule.market(buy_market).currency
     sell_ccy = schedule.market(sell_market).currency
     rates: dict[Currency, Decimal] = {}
@@ -160,7 +172,7 @@ def fees(
 def list_rules() -> None:
     """Показывает загруженные правила комиссий и их источники."""
     settings = Settings()
-    schedule = FeeSchedule.load(settings.fee_rules_path)
+    schedule = _schedule(settings)
     for market in schedule.marketplaces.values():
         typer.echo(f"{market.name} ({market.currency}, {market.payout.value})")
         for op in Operation:
@@ -498,7 +510,7 @@ def scan(
     logging.basicConfig(level=logging.DEBUG if verbose else logging.WARNING)
     _quiet_http()
     settings = Settings()
-    schedule = FeeSchedule.load(settings.fee_rules_path)
+    schedule = _schedule(settings)
     fx = _fx(settings, usd_per_eur)
     typer.echo(f"Курс: 1 EUR = {fx.rates[Currency.USD]} USD ({fx.source}), спред {_pct(fx.spread)}")
     opts = _scan_options(
@@ -612,7 +624,7 @@ def run_command(
         raise typer.BadParameter(f"--every: не меньше {MIN_EVERY.seconds // 60} минут")
     settings = Settings()
     logger = _run_logging(settings.log_path, verbose)
-    schedule = FeeSchedule.load(settings.fee_rules_path)
+    schedule = _schedule(settings)
     telegram = _telegram_target(settings)
     if telegram is None:
         logger.warning("Telegram не настроен: уведомлений, отчёта и тревог не будет")
@@ -757,7 +769,7 @@ def paper_report(
 ) -> None:
     """Отчёт по виртуальным сделкам: что стало с сигналами через 24ч, 3д и 7д."""
     settings = Settings()
-    schedule = FeeSchedule.load(settings.fee_rules_path)
+    schedule = _schedule(settings)
     cfg = ScanConfig()
     now = datetime.now(UTC)
     storage = Storage(settings.db_path)

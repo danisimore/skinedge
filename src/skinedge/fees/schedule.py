@@ -31,6 +31,7 @@ class Marketplace(BaseModel):
         transfer_lock_days: Сколько дней купленный предмет нельзя передать.
         settlement_days: Через сколько дней после продажи деньги доступны.
         item_url: Шаблон ссылки на предмет, ``{name}`` заменяется названием.
+        withdraw_method: Способ вывода по умолчанию, если правил вывода несколько.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -41,6 +42,7 @@ class Marketplace(BaseModel):
     transfer_lock_days: int = 0
     settlement_days: int = 0
     item_url: str | None = None
+    withdraw_method: str | None = None
 
 
 class FeeSchedule:
@@ -66,6 +68,20 @@ class FeeSchedule:
                 r for r in kept if not (r.marketplace == replace_marketplace and r.operation in ops)
             ]
         return FeeSchedule(self.marketplaces, [*kept, *rules])
+
+    def with_withdraw(self, marketplace: str, method: str) -> FeeSchedule:
+        """Новое расписание, где у площадки выбран другой способ вывода по умолчанию.
+
+        Raises:
+            ValueError: Если для этого способа нет правил.
+        """
+        known = self.methods(marketplace, Operation.WITHDRAW)
+        if method not in known:
+            raise ValueError(
+                f"{marketplace}: нет правил для способа вывода {method!r}; есть: {', '.join(known)}"
+            )
+        market = self.market(marketplace).model_copy(update={"withdraw_method": method})
+        return FeeSchedule({**self.marketplaces, marketplace: market}, self.rules)
 
     def __init__(self, marketplaces: dict[str, Marketplace], rules: list[FeeRule]) -> None:
         ids = [r.id for r in rules]
