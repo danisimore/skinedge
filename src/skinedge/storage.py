@@ -15,6 +15,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from skinedge.money import Currency
+from skinedge.paper import PaperTrade
 from skinedge.quotes import Quote, QuoteKind, SalesStats, SalesWindow
 
 SCHEMA = """
@@ -54,6 +55,28 @@ CREATE TABLE IF NOT EXISTS sales_stats (
     fetched_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS sales_item ON sales_stats (market_hash_name, source, fetched_at);
+CREATE INDEX IF NOT EXISTS sales_fetch ON sales_stats (source, period, fetched_at);
+
+CREATE TABLE IF NOT EXISTS paper_trades (
+    id INTEGER PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    app_id INTEGER NOT NULL,
+    market_hash_name TEXT NOT NULL,
+    buy_market TEXT NOT NULL,
+    sell_market TEXT NOT NULL,
+    buy_price TEXT NOT NULL,
+    buy_currency TEXT NOT NULL,
+    sell_price TEXT NOT NULL,
+    sell_currency TEXT NOT NULL,
+    cost_eur TEXT NOT NULL,
+    proceeds_eur TEXT NOT NULL,
+    profit_eur TEXT NOT NULL,
+    roi TEXT NOT NULL,
+    usd_per_eur TEXT,
+    complete INTEGER NOT NULL,
+    lock_days INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS paper_route ON paper_trades (market_hash_name, buy_market, sell_market);
 """
 
 
@@ -204,23 +227,7 @@ class Storage:
             (market_hash_name, source, market_hash_name, source),
         )
         order = list(SalesWindow)
-        stats = [
-            SalesStats(
-                source=r["source"],
-                app_id=r["app_id"],
-                market_hash_name=r["market_hash_name"],
-                version=r["version"],
-                currency=Currency(r["currency"]),
-                window=SalesWindow(r["period"]),
-                min=_pd(r["min"]),
-                max=_pd(r["max"]),
-                avg=_pd(r["avg"]),
-                median=_pd(r["median"]),
-                volume=r["volume"],
-                fetched_at=_ptr(r["fetched_at"]),
-            )
-            for r in cur
-        ]
+        stats = [self._sales(r) for r in cur]
         return sorted(stats, key=lambda st: (st.version or "", order.index(st.window)))
 
     def liquid_names(
@@ -259,6 +266,117 @@ class Storage:
                 break
         return names
 
+    def recent_quotes(self, source: str, since: datetime) -> dict[str, Quote]:
+        """Последняя котировка каждого предмета площадки, полученная не раньше ``since``."""
+        cur = self.conn.execute(
+            "SELECT * FROM quotes WHERE source = ? AND fetched_at >= ? ORDER BY fetched_at",
+            (source, since.isoformat()),
+        )
+        return {r["market_hash_name"]: self._quote(r) for r in cur}
+
+    def recent_sales(
+        self, source: str, window: SalesWindow, since: datetime
+    ) -> dict[str, SalesStats]:
+        """Последняя статистика продаж каждого предмета за окно ``window``.
+
+        Берутся только строки без варианта (``version``): сводка по всему названию.
+        """
+        cur = self.conn.execute(
+            "SELECT * FROM sales_stats WHERE source = ? AND period = ? AND version IS NULL"
+            " AND fetched_at >= ? ORDER BY fetched_at",
+            (source, window.value, since.isoformat()),
+        )
+        return {r["market_hash_name"]: self._sales(r) for r in cur}
+
+    def quote_after(self, market_hash_name: str, source: str, at: datetime) -> Quote | None:
+        """Первая котировка предмета, полученная в момент ``at`` или позже."""
+        row = self.conn.execute(
+            "SELECT * FROM quotes WHERE market_hash_name = ? AND source = ? AND fetched_at >= ?"
+            " ORDER BY fetched_at LIMIT 1",
+            (market_hash_name, source, at.isoformat()),
+        ).fetchone()
+        return None if row is None else self._quote(row)
+
+    def sales_after(
+        self, market_hash_name: str, source: str, window: SalesWindow, at: datetime
+    ) -> SalesStats | None:
+        """Первая статистика продаж предмета, полученная в момент ``at`` или позже."""
+        row = self.conn.execute(
+            "SELECT * FROM sales_stats WHERE market_hash_name = ? AND source = ? AND period = ?"
+            " AND version IS NULL AND fetched_at >= ? ORDER BY fetched_at LIMIT 1",
+            (market_hash_name, source, window.value, at.isoformat()),
+        ).fetchone()
+        return None if row is None else self._sales(row)
+
+    def save_paper(self, trade: PaperTrade) -> int:
+        """Записывает виртуальную сделку. Возвращает её id."""
+        with self._tx() as c:
+            cur = c.execute(
+                "INSERT INTO paper_trades (created_at, app_id, market_hash_name, buy_market,"
+                " sell_market, buy_price, buy_currency, sell_price, sell_currency, cost_eur,"
+                " proceeds_eur, profit_eur, roi, usd_per_eur, complete, lock_days)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    _t(trade.created_at),
+                    trade.app_id,
+                    trade.market_hash_name,
+                    trade.buy_market,
+                    trade.sell_market,
+                    str(trade.buy_price),
+                    trade.buy_currency.value,
+                    str(trade.sell_price),
+                    trade.sell_currency.value,
+                    str(trade.cost_eur),
+                    str(trade.proceeds_eur),
+                    str(trade.profit_eur),
+                    str(trade.roi),
+                    _d(trade.usd_per_eur),
+                    int(trade.complete),
+                    trade.lock_days,
+                ),
+            )
+        return int(cur.lastrowid or 0)
+
+    def paper_trades(self, since: datetime | None = None) -> list[PaperTrade]:
+        """Виртуальные сделки, старые первыми."""
+        cur = self.conn.execute(
+            "SELECT * FROM paper_trades WHERE created_at >= ? ORDER BY created_at, id",
+            (_t(since) or "",),
+        )
+        return [
+            PaperTrade(
+                id=r["id"],
+                created_at=_ptr(r["created_at"]),
+                app_id=r["app_id"],
+                market_hash_name=r["market_hash_name"],
+                buy_market=r["buy_market"],
+                sell_market=r["sell_market"],
+                buy_price=Decimal(r["buy_price"]),
+                buy_currency=Currency(r["buy_currency"]),
+                sell_price=Decimal(r["sell_price"]),
+                sell_currency=Currency(r["sell_currency"]),
+                cost_eur=Decimal(r["cost_eur"]),
+                proceeds_eur=Decimal(r["proceeds_eur"]),
+                profit_eur=Decimal(r["profit_eur"]),
+                roi=Decimal(r["roi"]),
+                usd_per_eur=_pd(r["usd_per_eur"]),
+                complete=bool(r["complete"]),
+                lock_days=r["lock_days"],
+            )
+            for r in cur
+        ]
+
+    def last_paper(
+        self, market_hash_name: str, buy_market: str, sell_market: str
+    ) -> datetime | None:
+        """Когда последний раз записана виртуальная сделка по этому маршруту."""
+        row = self.conn.execute(
+            "SELECT MAX(created_at) FROM paper_trades WHERE market_hash_name = ?"
+            " AND buy_market = ? AND sell_market = ?",
+            (market_hash_name, buy_market, sell_market),
+        ).fetchone()
+        return None if row[0] is None else _ptr(row[0])
+
     def search_names(self, pattern: str, limit: int = 20) -> list[str]:
         """Названия предметов, содержащие подстроку (без учёта регистра)."""
         cur = self.conn.execute(
@@ -267,6 +385,23 @@ class Storage:
             (f"%{pattern}%", limit),
         )
         return [r[0] for r in cur]
+
+    @staticmethod
+    def _sales(r: sqlite3.Row) -> SalesStats:
+        return SalesStats(
+            source=r["source"],
+            app_id=r["app_id"],
+            market_hash_name=r["market_hash_name"],
+            version=r["version"],
+            currency=Currency(r["currency"]),
+            window=SalesWindow(r["period"]),
+            min=_pd(r["min"]),
+            max=_pd(r["max"]),
+            avg=_pd(r["avg"]),
+            median=_pd(r["median"]),
+            volume=r["volume"],
+            fetched_at=_ptr(r["fetched_at"]),
+        )
 
     @staticmethod
     def _quote(r: sqlite3.Row) -> Quote:

@@ -11,12 +11,18 @@ from typing import Annotated
 import typer
 
 from skinedge.config import Settings
-from skinedge.fees.models import Operation
+from skinedge.fees.models import FeeRule, Operation
 from skinedge.fees.schedule import FeeSchedule, Payout
 from skinedge.finance.route import BALANCE, FeeLine, RouteCalculator, RouteResult
 from skinedge.fx import FxRates
 from skinedge.money import Currency, Money
-from skinedge.quotes import Quote
+from skinedge.paper import CHECKPOINTS
+from skinedge.paper import evaluate as paper_evaluate
+from skinedge.paper import record as paper_record
+from skinedge.paper import summarize as paper_summarize
+from skinedge.quotes import Quote, SalesWindow
+from skinedge.scanner import Opportunity, ScanConfig, Scanner
+from skinedge.sources import ecb
 from skinedge.sources.base import SourceError
 from skinedge.sources.dmarket import DMarketSigner, DMarketSource
 from skinedge.sources.skinport import SkinportSource
@@ -251,7 +257,8 @@ def _fetch_skinport(storage: Storage, app_id: int, sales: bool, show: int) -> No
 
 def _fetch_dmarket(
     storage: Storage, src: DMarketSource, names: list[str], app_id: int, show: int
-) -> None:
+) -> FeeRule | None:
+    """Загружает цены DMarket. Возвращает комиссию продавца для обычных лотов."""
     quotes = src.fetch_best_prices(names, app_id)
     storage.save_quotes(quotes)
     with_ask = [q for q in quotes if q.min_price is not None]
@@ -260,10 +267,13 @@ def _fetch_dmarket(
         f"DMarket, app_id={app_id}: запрошено {len(names)}, получено {len(quotes)}, "
         f"с предложениями {len(with_ask)}, с заявками {len(with_bid)}"
     )
+    fee: FeeRule | None = None
     for offer_type in ("dmarket", "p2p"):
         try:
             rule = src.fetch_sell_fees(app_id, offer_type)[0]
             typer.echo(f"Комиссия продавца ({offer_type}) из API: {rule.describe()}")
+            if offer_type == "dmarket":
+                fee = rule
         except SourceError as exc:
             typer.echo(f"Комиссия продавца ({offer_type}): не получена ({exc})")
     for q in sorted(with_ask, key=lambda q: q.quantity, reverse=True)[:show]:
@@ -271,6 +281,7 @@ def _fetch_dmarket(
             f"  {q.market_hash_name}: ask {q.min_price} USD ({q.quantity} шт.), "
             f"bid {q.best_bid} USD ({q.bid_quantity} шт.)"
         )
+    return fee
 
 
 @app.command()
@@ -353,3 +364,176 @@ def item(
                     typer.echo(f"    продажи {st.window.value}{version}: нет")
     finally:
         storage.close()
+
+
+MARKETS = ("skinport", "dmarket")
+
+
+def _fx(settings: Settings, usd_per_eur: str | None) -> FxRates:
+    if usd_per_eur is not None:
+        rate = _decimal(usd_per_eur, "--usd-per-eur")
+        return FxRates(rates={Currency.USD: rate}, spread=settings.fx_spread, source="cli")
+    try:
+        return ecb.fetch_rates(settings.fx_spread)
+    except SourceError as exc:
+        typer.echo(f"Не удалось получить курс ЕЦБ ({exc}). Укажи --usd-per-eur", err=True)
+        raise typer.Exit(1) from exc
+
+
+def render_opportunity(n: int, opp: Opportunity) -> str:
+    """Короткий отчёт по возможности."""
+    r = opp.result
+    lines = [
+        f"{n}. {opp.name}",
+        f"   {r.buy_market} → {r.sell_market}: купить {r.buy_price}, "
+        f"продать ~{r.sell_price} ({opp.sell.basis})",
+        f"   стоимость {r.total_cost}, выручка {r.net_proceeds}, прибыль {r.profit}, "
+        f"ROI {_pct(r.roi)}, запас {_pct(r.safety_margin)}, капитал заморожен {r.lock_days} дн.",
+    ]
+    lines += [f"   ! {f}" for f in opp.flags]
+    lines += [f"   {u}" for u in (opp.buy_url, opp.sell_url) if u]
+    return "\n".join(lines)
+
+
+@app.command()
+def scan(
+    fetch_first: Annotated[
+        bool, typer.Option("--fetch/--no-fetch", help="Сначала загрузить свежие цены")
+    ] = True,
+    app_id: Annotated[int, typer.Option("--app-id")] = 730,
+    limit: Annotated[int, typer.Option(help="Сколько ликвидных предметов проверить")] = 300,
+    min_price: Annotated[str, typer.Option("--min-price", help="Мин. цена Skinport, EUR")] = "1",
+    max_price: Annotated[str, typer.Option("--max-price", help="Макс. цена Skinport, EUR")] = "500",
+    min_profit: Annotated[str, typer.Option("--min-profit", help="Мин. прибыль, EUR")] = "0.50",
+    min_roi: Annotated[str, typer.Option("--min-roi", help="Мин. ROI, 0.05 = 5%")] = "0.05",
+    max_age: Annotated[int, typer.Option("--max-age", help="Макс. возраст цен, мин")] = 30,
+    usd_per_eur: Annotated[
+        str | None, typer.Option("--usd-per-eur", help="Курс вручную вместо ЕЦБ")
+    ] = None,
+    top: Annotated[int, typer.Option(help="Сколько возможностей показать")] = 15,
+    paper: Annotated[
+        bool, typer.Option("--paper/--no-paper", help="Записать виртуальные сделки")
+    ] = True,
+    verbose: Annotated[bool, typer.Option("--verbose", "-v")] = False,
+) -> None:
+    """Ищет выгодные маршруты Skinport ↔ DMarket. Только анализ, без сделок."""
+    logging.basicConfig(level=logging.DEBUG if verbose else logging.WARNING)
+    for noisy in ("httpcore", "hpack"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
+    settings = Settings()
+    schedule = FeeSchedule.load(settings.fee_rules_path)
+    fx = _fx(settings, usd_per_eur)
+    typer.echo(f"Курс: 1 EUR = {fx.rates[Currency.USD]} USD ({fx.source}), спред {_pct(fx.spread)}")
+    cfg = ScanConfig(
+        min_profit=_decimal(min_profit, "--min-profit"),
+        min_roi=_decimal(min_roi, "--min-roi"),
+        max_age=timedelta(minutes=max_age),
+    )
+    storage = Storage(settings.db_path)
+    try:
+        if fetch_first:
+            try:
+                _fetch_skinport(storage, app_id, sales=True, show=0)
+                names = storage.liquid_names(
+                    "skinport",
+                    limit,
+                    _decimal(min_price, "--min-price"),
+                    _decimal(max_price, "--max-price"),
+                )
+                fee = _fetch_dmarket(storage, _dmarket_source(settings), names, app_id, show=0)
+            except SourceError as exc:
+                typer.echo(f"Ошибка источника: {exc}", err=True)
+                raise typer.Exit(1) from exc
+            if fee is not None:
+                schedule = schedule.with_rules([fee], replace_marketplace="dmarket")
+            typer.echo("")
+
+        now = datetime.now(UTC)
+        since = now - cfg.max_age
+        quotes = {m: storage.recent_quotes(m, since) for m in MARKETS}
+        sales = {
+            m: storage.recent_sales(m, SalesWindow.D7, now - timedelta(hours=6)) for m in MARKETS
+        }
+        scanner = Scanner(schedule, fx, cfg)
+        found: list[Opportunity] = []
+        for buy, sell in (("skinport", "dmarket"), ("dmarket", "skinport")):
+            found += scanner.scan(buy, sell, quotes[buy], quotes[sell], sales[sell], now)
+        found.sort(key=lambda o: (not o.result.complete, -o.result.roi))
+        pairs = len(quotes["skinport"].keys() & quotes["dmarket"].keys())
+        typer.echo(
+            f"Сравнено предметов на обеих площадках: {pairs}. "
+            f"Возможностей: {len(found)} (полных расчётов {sum(o.result.complete for o in found)})"
+        )
+        if pairs == 0:
+            typer.echo("Нет свежих цен с обеих площадок. Запусти без --no-fetch.")
+        for n, opp in enumerate(found[:top], 1):
+            typer.echo("")
+            typer.echo(render_opportunity(n, opp))
+        if paper and found:
+            recorded = paper_record(storage, found, fx, now)
+            typer.echo(f"\nЗаписано виртуальных сделок: {recorded} (повторы за сутки пропущены)")
+    finally:
+        storage.close()
+    typer.echo(
+        "\nЭто оценка по текущим ценам, а не гарантированная прибыль. Сделки не совершаются."
+    )
+
+
+@app.command("paper")
+def paper_report(
+    days: Annotated[int, typer.Option(help="За сколько последних дней")] = 30,
+    show: Annotated[int, typer.Option(help="Сколько сделок показать подробно")] = 10,
+) -> None:
+    """Отчёт по виртуальным сделкам: что стало с сигналами через 24ч, 3д и 7д."""
+    settings = Settings()
+    schedule = FeeSchedule.load(settings.fee_rules_path)
+    cfg = ScanConfig()
+    now = datetime.now(UTC)
+    storage = Storage(settings.db_path)
+    try:
+        trades = storage.paper_trades(now - timedelta(days=days))
+        if not trades:
+            typer.echo("Виртуальных сделок нет. Они записываются командой skinedge scan.")
+            return
+        results = [
+            paper_evaluate(t, storage, schedule, settings.fx_spread, cfg, now) for t in trades
+        ]
+    finally:
+        storage.close()
+
+    avg_signal = sum((t.roi for t in trades), Decimal(0)) / len(trades)
+    complete = sum(t.complete for t in trades)
+    typer.echo(
+        f"Сигналов за {days} дн.: {len(trades)} (полных расчётов {complete}), "
+        f"средний ROI в момент сигнала {_pct(avg_signal)}"
+    )
+    typer.echo("\nЧто показал бы рынок продажи позже (по тем же комиссиям и курсу):")
+    for s in paper_summarize(results):
+        if s.evaluated == 0:
+            typer.echo(f"  {s.label}: данных пока нет")
+            continue
+        typer.echo(
+            f"  {s.label}: проверено {s.evaluated}, в плюсе {s.profitable}, "
+            f"не продать уверенно {s.unsellable}, средний ROI {_pct(s.avg_roi)}, "
+            f"сумма прибыли {s.total_profit} EUR"
+        )
+    typer.echo("\nПоследние сделки:")
+    labels = [label for label, _ in CHECKPOINTS]
+    for t, res in list(zip(trades, results, strict=True))[-show:]:
+        marks = []
+        for label in labels:
+            c = res.get(label)
+            if c is None:
+                marks.append(f"{label} —")
+            elif not c.sellable:
+                marks.append(f"{label} не продать")
+            else:
+                marks.append(f"{label} {_pct(c.roi)}")
+        typer.echo(
+            f"  {t.created_at:%m-%d %H:%M} {t.market_hash_name}: {t.buy_market} → "
+            f"{t.sell_market}, сигнал {_pct(t.roi)}; " + ", ".join(marks)
+        )
+    typer.echo(
+        "\nГлавная точка: 7д, когда купленный предмет можно передать. "
+        "Для контрольных точек нужны свежие цены: запускай skinedge scan хотя бы раз в день."
+    )
