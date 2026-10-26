@@ -1,0 +1,29 @@
+# Секреты
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Данные
+*.db
+*.sqlite3
+data/
+logs/
+
+# IDE
+.vscode/
+.idea/
+
+# Файлы для переноса коммитов
+*.bundle
