@@ -6,6 +6,7 @@ import logging
 import sys
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 from typing import Annotated
 
 import typer
@@ -16,6 +17,8 @@ from skinedge.fees.schedule import FeeSchedule, Payout
 from skinedge.finance.route import BALANCE, FeeLine, RouteCalculator, RouteResult
 from skinedge.fx import FxRates
 from skinedge.money import Currency, Money
+from skinedge.notify.message import format_digest
+from skinedge.notify.telegram import TelegramClient, TelegramError
 from skinedge.paper import CHECKPOINTS
 from skinedge.paper import evaluate as paper_evaluate
 from skinedge.paper import record as paper_record
@@ -39,6 +42,12 @@ def main() -> None:
         reconfigure = getattr(stream, "reconfigure", None)
         if reconfigure is not None:
             reconfigure(encoding="utf-8", errors="replace")
+
+
+def _quiet_http() -> None:
+    # httpx печатает адреса запросов, а в адресе Telegram есть токен бота.
+    for noisy in ("httpx", "httpcore", "hpack"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
 def _decimal(value: str, name: str) -> Decimal:
@@ -204,8 +213,7 @@ def fetch(
 ) -> None:
     """Загружает реальные цены с площадки и сохраняет их в историю."""
     logging.basicConfig(level=logging.DEBUG if verbose else logging.WARNING)
-    for noisy in ("httpcore", "hpack"):
-        logging.getLogger(noisy).setLevel(logging.WARNING)
+    _quiet_http()
     settings = Settings()
     storage = Storage(settings.db_path)
     try:
@@ -448,12 +456,14 @@ def scan(
     paper: Annotated[
         bool, typer.Option("--paper/--no-paper", help="Записать виртуальные сделки")
     ] = True,
+    notify: Annotated[
+        bool, typer.Option("--notify/--no-notify", help="Отправить новые возможности в Telegram")
+    ] = True,
     verbose: Annotated[bool, typer.Option("--verbose", "-v")] = False,
 ) -> None:
     """Ищет выгодные маршруты Skinport ↔ DMarket. Только анализ, без сделок."""
     logging.basicConfig(level=logging.DEBUG if verbose else logging.WARNING)
-    for noisy in ("httpcore", "hpack"):
-        logging.getLogger(noisy).setLevel(logging.WARNING)
+    _quiet_http()
     settings = Settings()
     schedule = FeeSchedule.load(settings.fee_rules_path)
     fx = _fx(settings, usd_per_eur)
@@ -526,11 +536,134 @@ def scan(
                 f"\nЗаписано виртуальных сделок: {recorded} "
                 "(только по стандартным порогам, повторы за сутки пропущены)"
             )
+        if notify:
+            _notify(settings, storage, found, now)
     finally:
         storage.close()
     typer.echo(
         "\nЭто оценка по текущим ценам, а не гарантированная прибыль. Сделки не совершаются."
     )
+
+
+NOTIFY_COOLDOWN = timedelta(hours=24)
+NOTIFY_MAX = 5
+
+
+def _telegram(settings: Settings) -> TelegramClient:
+    if settings.telegram_bot_token is None:
+        typer.echo(
+            "Нет токена бота: заполни TG_BOT_TOKEN (или SKINEDGE_TELEGRAM_BOT_TOKEN)", err=True
+        )
+        raise typer.Exit(1)
+    try:
+        return TelegramClient(settings.telegram_bot_token.get_secret_value())
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+
+def _notify(settings: Settings, storage: Storage, found: list[Opportunity], now: datetime) -> None:
+    """Отправляет в Telegram возможности, по которым ещё не было уведомления за сутки."""
+    if settings.telegram_bot_token is None or not settings.telegram_chat_id:
+        typer.echo("Telegram не настроен: уведомления не отправлены (skinedge telegram setup)")
+        return
+    floor = ScanConfig()
+    fresh = []
+    for opp in found:
+        r = opp.result
+        if r.roi < floor.min_roi or r.profit.amount < floor.min_profit:
+            continue
+        last = storage.last_notified(opp.name, r.buy_market, r.sell_market)
+        if last is None or now - last >= NOTIFY_COOLDOWN:
+            fresh.append(opp)
+    if not fresh:
+        typer.echo("Новых возможностей для уведомления нет")
+        return
+    batch = fresh[:NOTIFY_MAX]
+    try:
+        _telegram(settings).send(settings.telegram_chat_id, format_digest(batch, len(found)))
+    except TelegramError as exc:
+        typer.echo(f"Telegram: уведомление не отправлено ({exc})", err=True)
+        return
+    for opp in batch:
+        r = opp.result
+        storage.save_notification(
+            now, opp.name, r.buy_market, r.sell_market, r.profit.amount, r.roi
+        )
+    typer.echo(f"Отправлено в Telegram: {len(batch)} (без повторов за сутки)")
+
+
+telegram_app = typer.Typer(help="Уведомления в Telegram.")
+app.add_typer(telegram_app, name="telegram")
+
+
+@telegram_app.command("setup")
+def telegram_setup(
+    save: Annotated[bool, typer.Option(help="Записать найденный чат в .env")] = False,
+    chat_id: Annotated[
+        int | None, typer.Option("--chat-id", help="Какой чат выбрать, если их несколько")
+    ] = None,
+) -> None:
+    """Находит чат, в котором ты написал боту /start, и показывает его id."""
+    _quiet_http()
+    settings = Settings()
+    bot = _telegram(settings)
+    if settings.telegram_chat_id:
+        typer.echo(f"Чат уже задан: {settings.telegram_chat_id}")
+    try:
+        chats = bot.chats()
+    except TelegramError as exc:
+        typer.echo(f"Telegram: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    if not chats:
+        typer.echo(
+            "Боту пока никто не писал (или сообщения старше суток). "
+            "Отправь боту /start и повтори команду."
+        )
+        raise typer.Exit(1)
+    typer.echo("Чаты, в которых писали боту:")
+    for c in chats:
+        typer.echo(f"  {c.id}  {c.type}  {c.title}  последнее сообщение: {c.last_text[:30]!r}")
+    if chat_id is not None:
+        chosen = [c for c in chats if c.id == chat_id]
+    else:
+        chosen = chats if len(chats) == 1 else []
+    if not chosen:
+        typer.echo("Выбери чат: skinedge telegram setup --save --chat-id <id>")
+        return
+    if not save:
+        typer.echo(f"Добавь в .env строку: SKINEDGE_TELEGRAM_CHAT_ID={chosen[0].id}")
+        typer.echo("или запусти: skinedge telegram setup --save")
+        return
+    if settings.telegram_chat_id:
+        typer.echo("В настройках уже есть чат, .env не меняю. Удали старую строку и повтори.")
+        return
+    env = Path(".env")
+    prefix = "" if not env.exists() or env.read_bytes().endswith(b"\n") else "\n"
+    with env.open("a", encoding="utf-8") as f:
+        f.write(f"{prefix}SKINEDGE_TELEGRAM_CHAT_ID={chosen[0].id}\n")
+    typer.echo(f"Записал в .env: SKINEDGE_TELEGRAM_CHAT_ID={chosen[0].id}")
+
+
+@telegram_app.command("test")
+def telegram_test() -> None:
+    """Отправляет тестовое сообщение в настроенный чат."""
+    _quiet_http()
+    settings = Settings()
+    bot = _telegram(settings)
+    if not settings.telegram_chat_id:
+        typer.echo("Нет чата: запусти skinedge telegram setup --save", err=True)
+        raise typer.Exit(1)
+    try:
+        bot.send(
+            settings.telegram_chat_id,
+            "✅ SkinEdge подключён. Сюда будут приходить новые арбитражные возможности. "
+            "Бот только уведомляет и ничего не покупает и не продаёт.",
+        )
+    except TelegramError as exc:
+        typer.echo(f"Telegram: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo("Тестовое сообщение отправлено")
 
 
 @app.command("paper")

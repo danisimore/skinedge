@@ -78,6 +78,17 @@ CREATE TABLE IF NOT EXISTS paper_trades (
     model INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS paper_route ON paper_trades (market_hash_name, buy_market, sell_market);
+
+CREATE TABLE IF NOT EXISTS notifications (
+    id INTEGER PRIMARY KEY,
+    sent_at TEXT NOT NULL,
+    market_hash_name TEXT NOT NULL,
+    buy_market TEXT NOT NULL,
+    sell_market TEXT NOT NULL,
+    profit_eur TEXT NOT NULL,
+    roi TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS notify_item ON notifications (market_hash_name, buy_market, sell_market);
 """
 
 
@@ -383,6 +394,41 @@ class Storage:
             (market_hash_name, buy_market, sell_market, MODEL),
         ).fetchone()
         return None if row[0] is None else _ptr(row[0])
+
+    def last_notified(
+        self, market_hash_name: str, buy_market: str, sell_market: str
+    ) -> datetime | None:
+        """Когда последний раз отправлялось уведомление по этому маршруту."""
+        row = self.conn.execute(
+            "SELECT MAX(sent_at) FROM notifications WHERE market_hash_name = ?"
+            " AND buy_market = ? AND sell_market = ?",
+            (market_hash_name, buy_market, sell_market),
+        ).fetchone()
+        return None if row[0] is None else _ptr(row[0])
+
+    def save_notification(
+        self,
+        sent_at: datetime,
+        market_hash_name: str,
+        buy_market: str,
+        sell_market: str,
+        profit_eur: Decimal,
+        roi: Decimal,
+    ) -> None:
+        """Отмечает, что уведомление по маршруту отправлено."""
+        with self._tx() as c:
+            c.execute(
+                "INSERT INTO notifications (sent_at, market_hash_name, buy_market, sell_market,"
+                " profit_eur, roi) VALUES (?,?,?,?,?,?)",
+                (
+                    sent_at.isoformat(),
+                    market_hash_name,
+                    buy_market,
+                    sell_market,
+                    str(profit_eur),
+                    str(roi),
+                ),
+            )
 
     def search_names(self, pattern: str, limit: int = 20) -> list[str]:
         """Названия предметов, содержащие подстроку (без учёта регистра)."""

@@ -19,11 +19,11 @@ class Settings(BaseSettings):
         csfloat_api_key: Ключ CSFloat API (после первой сделки на CSFloat).
         dmarket_public_key: Публичный ключ DMarket Trading API.
         dmarket_secret_key: Секретный ключ DMarket Trading API.
-        telegram_bot_token: Токен Telegram-бота (этап 6).
-        telegram_chat_id: Чат для уведомлений (этап 6).
+        telegram_bot_token: Токен Telegram-бота.
+        telegram_chat_id: Чат для уведомлений.
 
-    Ключ CSFloat и токен бота читаются и под короткими именами
-    ``SKINEDGE_CSFLOAT_KEY`` и ``TG_BOT_TOKEN``.
+    Ключ CSFloat, токен бота и чат читаются и под короткими именами
+    ``SKINEDGE_CSFLOAT_KEY``, ``TG_BOT_TOKEN`` и ``TG_CHAT_ID``.
     """
 
     model_config = SettingsConfigDict(env_prefix="SKINEDGE_", env_file=".env", extra="ignore")
@@ -39,4 +39,6 @@ class Settings(BaseSettings):
     telegram_bot_token: SecretStr | None = Field(
         None, validation_alias=AliasChoices("SKINEDGE_TELEGRAM_BOT_TOKEN", "TG_BOT_TOKEN")
     )
-    telegram_chat_id: str | None = None
+    telegram_chat_id: str | None = Field(
+        None, validation_alias=AliasChoices("SKINEDGE_TELEGRAM_CHAT_ID", "TG_CHAT_ID")
+    )
