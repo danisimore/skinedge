@@ -1,0 +1,174 @@
+# Правила комиссий SkinEdge.
+#
+# Каждое правило относится к паре «площадка × операция» и при необходимости к способу
+# оплаты или вывода (method). verification показывает, насколько надёжна цифра:
+#   official    — официальная страница площадки
+#   account     — проверено в аккаунте пользователя
+#   third_party — сторонний обзор, нужно подтвердить
+#   unknown     — размер неизвестен; расчёт с таким правилом считается неполным
+#
+# Если для операции нет ни одного правила, расчёт тоже помечается неполным.
+
+marketplaces:
+  skinport:
+    currency: EUR
+    payout: cash
+    # Предмет, купленный и полученный трейдом, 7 дней нельзя передать (CS2 Trade Protection).
+    transfer_lock_days: 7
+    # Выплата продавцу после окончания Trade Protection.
+    settlement_days: 7
+    item_url: "https://skinport.com/market?search={name}"
+  csfloat:
+    currency: USD
+    payout: cash
+    transfer_lock_days: 7
+    settlement_days: 7
+    item_url: "https://csfloat.com/search?market_hash_name={name}"
+  steam:
+    # Валюта кошелька пользователя; для Финляндии EUR.
+    currency: EUR
+    payout: steam_wallet
+    # Купленное на рынке Steam можно перепродать только через 7 дней.
+    transfer_lock_days: 7
+    settlement_days: 0
+    item_url: "https://steamcommunity.com/market/listings/730/{name}"
+
+rules:
+  # ---------- Skinport ----------
+  - id: skinport.buy
+    marketplace: skinport
+    operation: buy
+    kind: percent
+    rate: "0"
+    currency: EUR
+    verification: third_party
+    source: "https://www.steamdb.com/en/markets/skinport"
+    verified_at: 2026-07-02
+    note: "Покупатель платит цену лота без отдельной комиссии"
+
+  - id: skinport.sell.standard
+    marketplace: skinport
+    operation: sell
+    kind: percent
+    rate: "0.08"
+    price_to: "1000"
+    currency: EUR
+    verification: third_party
+    source: "https://www.steamdb.com/en/markets/skinport"
+    verified_at: 2026-07-02
+    note: "8% для публичных лотов дешевле 1000 EUR"
+
+  - id: skinport.sell.high
+    marketplace: skinport
+    operation: sell
+    kind: percent
+    rate: "0.06"
+    price_from: "1000"
+    currency: EUR
+    verification: third_party
+    source: "https://www.steamdb.com/en/markets/skinport"
+    verified_at: 2026-07-02
+    note: "6% для лотов от 1000 EUR"
+
+  - id: skinport.deposit.any
+    marketplace: skinport
+    operation: deposit
+    kind: percent
+    rate: "0"
+    currency: EUR
+    verification: unknown
+    source: "https://www.steamdb.com/en/markets/skinport"
+    note: "Комиссии пополнения (карта, SEPA, PayPal) не найдены в источниках"
+
+  - id: skinport.withdraw.bank
+    marketplace: skinport
+    operation: withdraw
+    method: bank
+    kind: percent
+    rate: "0"
+    currency: EUR
+    verification: third_party
+    source: "https://www.steamdb.com/en/markets/skinport"
+    verified_at: 2026-07-02
+    note: "Вывод на банк/SEPA без комиссии Skinport, нужен KYC; банк может взять своё"
+
+  # ---------- CSFloat ----------
+  - id: csfloat.buy
+    marketplace: csfloat
+    operation: buy
+    kind: percent
+    rate: "0"
+    currency: USD
+    verification: third_party
+    source: "https://www.steamdb.com/en/markets/csfloat"
+    verified_at: 2026-07-02
+
+  - id: csfloat.sell
+    marketplace: csfloat
+    operation: sell
+    kind: percent
+    rate: "0.02"
+    currency: USD
+    verification: third_party
+    source: "https://www.steamdb.com/en/markets/csfloat"
+    verified_at: 2026-07-02
+
+  - id: csfloat.deposit.card
+    marketplace: csfloat
+    operation: deposit
+    method: card
+    kind: percent
+    rate: "0.028"
+    currency: USD
+    verification: third_party
+    source: "https://www.steamdb.com/en/markets/csfloat"
+    verified_at: 2026-07-02
+    note: "Stripe, банковская карта"
+
+  - id: csfloat.deposit.sepa
+    marketplace: csfloat
+    operation: deposit
+    method: sepa
+    kind: percent
+    rate: "0.033"
+    currency: USD
+    verification: third_party
+    source: "https://www.steamdb.com/en/markets/csfloat"
+    verified_at: 2026-07-02
+    note: "Stripe, SEPA Direct Debit"
+
+  - id: csfloat.withdraw.bank
+    marketplace: csfloat
+    operation: withdraw
+    method: bank
+    kind: percent
+    rate: "0.025"
+    currency: USD
+    verification: third_party
+    source: "https://www.steamdb.com/en/markets/csfloat"
+    verified_at: 2026-07-02
+    note: "Тариф 0.5–2.5% зависит от оборота; берём худший случай"
+
+  # ---------- Steam Community Market ----------
+  - id: steam.buy
+    marketplace: steam
+    operation: buy
+    kind: percent
+    rate: "0"
+    currency: EUR
+    verification: third_party
+    source: "https://csdb.gg/trading-site/steam/"
+    note: "Комиссии уже включены в цену, которую видит покупатель"
+
+  - id: steam.sell.cs2
+    marketplace: steam
+    operation: sell
+    kind: steam
+    currency: EUR
+    rounding: floor
+    extra:
+      steam_rate: "0.05"
+      game_rate: "0.10"
+    verification: third_party
+    source: "https://csdb.gg/trading-site/steam/"
+    note: "5% Steam (мин. 0.01) + 10% CS2 (мин. 0.01) от суммы, которую получает продавец"
