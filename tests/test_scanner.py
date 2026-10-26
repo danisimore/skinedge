@@ -94,29 +94,53 @@ def test_preliminary_estimate_requires_listings() -> None:
     assert "предварительно" in est.basis
 
 
-def test_stats_from_sales_window_and_median() -> None:
-    def sale(price: str, days_ago: float) -> Sale:
-        return Sale(
-            source="dmarket",
-            app_id=730,
-            market_hash_name=NAME,
-            currency=Currency.USD,
-            price=Decimal(price),
-            sold_at=NOW - timedelta(days=days_ago),
-            fetched_at=NOW,
-        )
+def test_estimate_no_listings() -> None:
+    assert estimate_sell(q("dmarket", None, qty=0), stats("1", 9, source="dmarket"), CFG) is None
 
-    sales = [sale("1.36", 1), sale("1.07", 2), sale("1.51", 3), sale("1.40", 6), sale("9", 20)]
+
+def _sale(price: str, ago: timedelta) -> Sale:
+    return Sale(
+        source="dmarket",
+        app_id=730,
+        market_hash_name=NAME,
+        currency=Currency.USD,
+        price=Decimal(price),
+        sold_at=NOW - ago,
+        fetched_at=NOW,
+    )
+
+
+def test_stats_from_sales_counts_episodes() -> None:
+    d = timedelta(days=1)
+    sales = [
+        _sale("1.40", 6 * d),
+        _sale("1.51", 3 * d),
+        _sale("1.07", 2 * d),
+        _sale("1.36", 1 * d),
+        _sale("9", 20 * d),  # вне окна 7 дней
+    ]
     st = stats_from_sales(sales, "dmarket", 730, NAME, Currency.USD, NOW)
-    assert st.volume == 4  # сделка 20-дневной давности не входит в окно 7 дней
-    assert st.median == Decimal("1.38")  # (1.36 + 1.40) / 2
+    assert st.volume == 4
+    assert st.median == Decimal("1.36")  # медиана эпизодов 1.38, но свежий эпизод 1.36
     assert st.min == Decimal("1.07") and st.max == Decimal("1.51")
-    empty = stats_from_sales([sale("9", 20)], "dmarket", 730, NAME, Currency.USD, NOW)
+    empty = stats_from_sales([_sale("9", 20 * d)], "dmarket", 730, NAME, Currency.USD, NOW)
     assert empty.volume == 0 and empty.median is None
 
 
-def test_estimate_no_listings() -> None:
-    assert estimate_sell(q("dmarket", None, qty=0), None, CFG) is None
+def test_bulk_purchase_is_one_episode() -> None:
+    # Случай из живой проверки (Stockholm 2021 capsule): 12 покупок за минуту по 2.60–3.03,
+    # затем 8 продаж в заявки по ~1.91. Это два эпизода, а не 20 продаж.
+    night = NOW - timedelta(hours=19)
+    bulk = [
+        _sale(p, NOW - night + timedelta(seconds=i))
+        for i, p in enumerate(["2.66"] * 6 + ["3.03"] * 6)
+    ]
+    fresh = [_sale(p, timedelta(hours=3, seconds=i)) for i, p in enumerate(["1.91"] * 7 + ["2.17"])]
+    st = stats_from_sales(bulk + fresh, "dmarket", 730, NAME, Currency.USD, NOW)
+    assert st.volume == 2
+    assert st.median == Decimal("1.91")  # не выше свежего эпизода
+    sell = q("dmarket", "2.84", qty=67)
+    assert estimate_sell(sell, st, CFG) is None  # двух эпизодов мало для уверенной продажи
 
 
 # ---------- сканер ----------

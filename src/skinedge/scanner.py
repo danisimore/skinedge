@@ -23,6 +23,8 @@ from skinedge.money import Currency, Money
 from skinedge.quotes import Quote, QuoteKind, Sale, SalesStats, SalesWindow
 
 UNDERCUT = Decimal("0.01")  # выставляем на цент дешевле текущего минимума
+EPISODE_GAP = timedelta(minutes=5)  # сделки ближе друг к другу — одна массовая покупка
+EPISODIC = frozenset({"dmarket"})  # площадки, где volume — число эпизодов, а не штук
 _PHASED = ("Doppler", "Gamma Doppler")
 
 
@@ -99,11 +101,24 @@ def estimate_sell(
         return SellEstimate(Money.of(ask, quote.currency), "предварительно: минимум лотов −0.01")
     if median < ask:
         return SellEstimate(
-            Money.of(median, quote.currency), f"медиана продаж 7д, {sales_7d.volume} шт."
+            Money.of(median, quote.currency), f"медиана продаж 7д, {_count(sales_7d)}"
         )
     return SellEstimate(
-        Money.of(ask, quote.currency), f"минимум лотов −0.01, продаж 7д {sales_7d.volume}"
+        Money.of(ask, quote.currency), f"минимум лотов −0.01, продаж 7д: {_count(sales_7d)}"
     )
+
+
+def _count(stats: SalesStats) -> str:
+    unit = "эпизодов" if stats.source in EPISODIC else "шт."
+    return f"{stats.volume} {unit}"
+
+
+def _median(values: list[Decimal]) -> Decimal:
+    ordered = sorted(values)
+    mid = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[mid]
+    return (ordered[mid - 1] + ordered[mid]) / 2
 
 
 def stats_from_sales(
@@ -115,31 +130,43 @@ def stats_from_sales(
     now: datetime,
     window: SalesWindow = SalesWindow.D7,
 ) -> SalesStats:
-    """Статистика продаж за окно по списку отдельных сделок.
+    """Статистика продаж за окно по списку отдельных сделок (для DMarket).
 
-    Используется для площадок, которые отдают сделки, а не сводку (DMarket).
-    Если площадка отдаёт ограниченное число последних сделок, ``volume`` —
-    нижняя граница настоящего числа продаж.
+    Сделки считаются по эпизодам, а не по штукам: продажи, между которыми меньше
+    ``EPISODE_GAP``, — это одна массовая покупка одного покупателя, и она не должна
+    перевешивать остальной рынок. В ``volume`` записывается число эпизодов,
+    в ``median`` — медиана цен эпизодов, но не выше цены самого свежего эпизода:
+    если рынок только что продавал дешевле, на старую цену рассчитывать нельзя.
     """
     days = {SalesWindow.H24: 1, SalesWindow.D7: 7, SalesWindow.D30: 30, SalesWindow.D90: 90}
     since = now - timedelta(days=days[window])
-    prices = sorted(s.price for s in sales if s.sold_at >= since and s.currency == currency)
+    recent = sorted(
+        (s for s in sales if s.sold_at >= since and s.currency == currency),
+        key=lambda s: s.sold_at,
+    )
+    episodes: list[list[Decimal]] = []
+    last: datetime | None = None
+    for sale in recent:
+        if last is None or sale.sold_at - last > EPISODE_GAP:
+            episodes.append([])
+        episodes[-1].append(sale.price)
+        last = sale.sold_at
+    prices = [p for e in episodes for p in e]
     median = None
-    if prices:
-        mid = len(prices) // 2
-        median = prices[mid] if len(prices) % 2 else (prices[mid - 1] + prices[mid]) / 2
-        median = median.quantize(Decimal("0.01"), ROUND_FLOOR)
+    if episodes:
+        typical = _median([_median(e) for e in episodes])
+        median = min(typical, _median(episodes[-1])).quantize(Decimal("0.01"), ROUND_FLOOR)
     return SalesStats(
         source=source,
         app_id=app_id,
         market_hash_name=name,
         currency=currency,
         window=window,
-        min=prices[0] if prices else None,
-        max=prices[-1] if prices else None,
+        min=min(prices) if prices else None,
+        max=max(prices) if prices else None,
         avg=(sum(prices, Decimal(0)) / len(prices)).quantize(Decimal("0.01")) if prices else None,
         median=median,
-        volume=len(prices),
+        volume=len(episodes),
         fetched_at=now,
     )
 
