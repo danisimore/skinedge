@@ -5,6 +5,7 @@ from __future__ import annotations
 from decimal import Decimal
 from html import escape
 
+from skinedge.paper import Report
 from skinedge.scanner import Opportunity
 
 
@@ -49,3 +50,30 @@ def format_digest(opportunities: list[Opportunity], total: int) -> str:
         "перед сделкой проверь лот, float и наклейки вручную."
     )
     return "\n\n".join(blocks)
+
+
+def format_paper_report(report: Report, days: int) -> str:
+    """Ежедневный отчёт по виртуальным сделкам."""
+    lines = [f"📒 <b>SkinEdge: виртуальные сделки за {days} дн.</b>"]
+    if not report.trades:
+        lines.append("Сигналов пока нет: ни одна возможность не прошла стандартные пороги.")
+        return "\n".join(lines)
+    complete = sum(t.complete for t in report.trades)
+    lines.append(
+        f"Сигналов: {len(report.trades)} (полных расчётов {complete}), "
+        f"средний ROI в момент сигнала {_pct(report.avg_signal_roi)}"
+    )
+    for s in report.summaries:
+        if s.evaluated == 0:
+            lines.append(f"{s.label}: данных пока нет")
+            continue
+        lines.append(
+            f"{s.label}: проверено {s.evaluated}, в плюсе {s.profitable}, "
+            f"не продать уверенно {s.unsellable}, средний ROI {_pct(s.avg_roi)}, "
+            f"прибыль {s.total_profit} EUR"
+        )
+    lines.append(
+        "<i>Главная точка: 7д, когда купленный предмет можно передать. "
+        "Это пересчёт по рыночным ценам, сделки не совершались.</i>"
+    )
+    return "\n".join(lines)

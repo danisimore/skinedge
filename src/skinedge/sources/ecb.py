@@ -56,8 +56,13 @@ def parse_rates(xml: str, spread: Decimal) -> FxRates:
 
 def fetch_rates(spread: Decimal, client: httpx.Client | None = None) -> FxRates:
     """Загружает текущие курсы ЕЦБ."""
-    client = client or httpx.Client(timeout=30)
-    response = request_with_retries(client, "GET", URL, limiter=RateLimiter(1, 1.0))
+    own = client is None
+    http = client or httpx.Client(timeout=30)
+    try:
+        response = request_with_retries(http, "GET", URL, limiter=RateLimiter(1, 1.0))
+    finally:
+        if own:
+            http.close()
     if response.status_code != 200:
         raise SourceError(f"ЕЦБ: HTTP {response.status_code}")
     return parse_rates(response.text, spread)

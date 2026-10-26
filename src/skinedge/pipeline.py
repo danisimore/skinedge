@@ -1,0 +1,299 @@
+"""Один полный проход сканера: загрузка цен → проверка продаж → поиск → журнал → уведомление.
+
+Используется и командой ``skinedge scan``, и фоновым запуском ``skinedge run``.
+Источники, Telegram и часы передаются снаружи, поэтому проход тестируется без сети.
+
+Чтобы база не росла на десятки мегабайт за каждый проход, сохраняются только
+предметы, которые сканер реально сравнивает («вселенная»): самые ликвидные
+предметы Skinport в заданном ценовом диапазоне и предметы открытых виртуальных
+сделок, для которых нужны контрольные точки.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+
+from skinedge.fees.schedule import FeeSchedule
+from skinedge.fx import FxRates
+from skinedge.money import Currency
+from skinedge.notify.message import format_digest
+from skinedge.notify.telegram import TelegramClient, TelegramError
+from skinedge.paper import record as paper_record
+from skinedge.quotes import Quote, SalesStats, SalesWindow
+from skinedge.scanner import Opportunity, ScanConfig, Scanner, stats_from_sales
+from skinedge.sources.base import SourceError
+from skinedge.sources.dmarket import DMarketSource
+from skinedge.sources.skinport import SkinportSource
+from skinedge.storage import Storage
+
+MARKETS = ("skinport", "dmarket")
+NOTIFY_COOLDOWN = timedelta(hours=24)
+NOTIFY_MAX = 5
+PAPER_HORIZON = timedelta(days=8)  # сделки, для которых ещё нужны контрольные точки
+STATS_MAX_AGE = timedelta(hours=6)
+# Окна продаж, которые нужны сканеру: 7 дней для цены, 24 часа и 30 дней для тренда.
+SALES_WINDOWS = frozenset({SalesWindow.H24, SalesWindow.D7, SalesWindow.D30})
+
+
+@dataclass(frozen=True)
+class ScanOptions:
+    """Параметры прохода.
+
+    Attributes:
+        app_id: Steam app_id игры.
+        limit: Сколько самых ликвидных предметов Skinport сравнивать.
+        min_price: Нижняя граница цены Skinport, EUR.
+        max_price: Верхняя граница цены Skinport, EUR.
+        config: Пороги сканера.
+        verify: Сколько кандидатов на продажу в DMarket проверять по сделкам.
+        fetch: Загружать свежие цены (иначе работать по сохранённым).
+        paper: Записывать виртуальные сделки.
+        notify: Отправлять уведомления.
+    """
+
+    app_id: int = 730
+    limit: int = 300
+    min_price: Decimal = Decimal("1")
+    max_price: Decimal = Decimal("500")
+    config: ScanConfig = field(default_factory=ScanConfig)
+    verify: int = 40
+    fetch: bool = True
+    paper: bool = True
+    notify: bool = True
+
+
+@dataclass
+class ScanResult:
+    """Итог прохода.
+
+    Attributes:
+        at: Момент скана.
+        found: Найденные возможности, лучшие первыми.
+        pairs: Сколько предметов сравнено на обеих площадках.
+        recorded: Сколько виртуальных сделок записано.
+        notified: Сколько возможностей отправлено в Telegram.
+    """
+
+    at: datetime
+    found: list[Opportunity] = field(default_factory=list)
+    pairs: int = 0
+    recorded: int = 0
+    notified: int = 0
+
+
+def liquid(quotes: list[Quote], limit: int, min_price: Decimal, max_price: Decimal) -> list[str]:
+    """Самые ликвидные предметы (по числу лотов) в ценовом диапазоне."""
+    eligible = [
+        q
+        for q in quotes
+        if q.min_price is not None and q.quantity > 0 and min_price <= q.min_price <= max_price
+    ]
+    eligible.sort(key=lambda q: q.quantity, reverse=True)
+    return [q.market_hash_name for q in eligible[:limit]]
+
+
+def trends(storage: Storage, since: datetime) -> dict[str, Decimal]:
+    """Изменение цены на Skinport: медиана продаж за 24ч к медиане за 30д − 1."""
+    day = storage.recent_sales("skinport", SalesWindow.H24, since)
+    month = storage.recent_sales("skinport", SalesWindow.D30, since)
+    out: dict[str, Decimal] = {}
+    for name, d in day.items():
+        m = month.get(name)
+        if d.median is None or d.volume < 3 or m is None or not m.median:
+            continue
+        out[name] = d.median / m.median - 1
+    return out
+
+
+class Pipeline:
+    """Проход сканера.
+
+    Args:
+        storage: База.
+        schedule: Площадки и комиссии.
+        fx: Курсы валют.
+        skinport: Источник Skinport (нужен при ``fetch``).
+        dmarket: Источник DMarket (нужен при ``fetch``).
+        telegram: Клиент Telegram и чат; ``None`` — уведомления не настроены.
+        out: Куда писать ход работы (консоль или лог).
+        clock: Текущее время (для тестов).
+    """
+
+    def __init__(
+        self,
+        storage: Storage,
+        schedule: FeeSchedule,
+        fx: FxRates,
+        skinport: SkinportSource | None = None,
+        dmarket: DMarketSource | None = None,
+        telegram: tuple[TelegramClient, str] | None = None,
+        out: Callable[[str], None] = print,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
+        self.storage = storage
+        self.schedule = schedule
+        self.fx = fx
+        self.skinport = skinport
+        self.dmarket = dmarket
+        self.telegram = telegram
+        self.out = out
+        self.clock = clock
+
+    def run(self, opts: ScanOptions) -> ScanResult:
+        """Полный проход: скан, журнал виртуальных сделок, уведомление.
+
+        Raises:
+            SourceError: Если площадка не отдала цены.
+        """
+        result = self.scan(opts)
+        if opts.paper:
+            result.recorded = self.record(result)
+        if opts.notify:
+            result.notified = self.notify(result.found, result.at)
+        return result
+
+    def scan(self, opts: ScanOptions) -> ScanResult:
+        """Загружает цены (если ``fetch``) и ищет возможности. Ничего не отправляет.
+
+        Raises:
+            SourceError: Если площадка не отдала цены.
+        """
+        cfg = opts.config
+        schedule = self.schedule
+        if opts.fetch:
+            schedule = self._fetch(opts)
+
+        now = self.clock()
+        quotes = {m: self.storage.recent_quotes(m, now - cfg.max_age) for m in MARKETS}
+        scanner = Scanner(schedule, self.fx, cfg)
+        if opts.fetch:
+            # Продажу на DMarket подтверждаем реальными сделками: минимальный лот
+            # без сделок может стоять месяцами и не говорит о спросе.
+            check = scanner.candidates(
+                "skinport", "dmarket", quotes["skinport"], quotes["dmarket"], now, opts.verify
+            )
+            open_trades = sorted(
+                {
+                    t.market_hash_name
+                    for t in self.storage.paper_trades(now - PAPER_HORIZON)
+                    if t.sell_market == "dmarket"
+                }
+            )
+            self._verify_dmarket(list(dict.fromkeys([*check, *open_trades])), opts.app_id, now)
+
+        stats_since = now - STATS_MAX_AGE
+        sales = {m: self.storage.recent_sales(m, SalesWindow.D7, stats_since) for m in MARKETS}
+        changes = trends(self.storage, stats_since)
+        result = ScanResult(at=now)
+        for buy, sell in (("skinport", "dmarket"), ("dmarket", "skinport")):
+            result.found += scanner.scan(
+                buy, sell, quotes[buy], quotes[sell], sales[sell], now, changes
+            )
+        result.found.sort(key=lambda o: (not o.result.complete, -o.result.roi))
+        result.pairs = len(quotes["skinport"].keys() & quotes["dmarket"].keys())
+        return result
+
+    def record(self, result: ScanResult) -> int:
+        """Записывает виртуальные сделки по стандартным порогам. Возвращает их число."""
+        if not result.found:
+            return 0
+        return paper_record(self.storage, result.found, self.fx, result.at, ScanConfig())
+
+    # ---------- загрузка ----------
+
+    def _universe_extra(self, now: datetime) -> set[str]:
+        return {t.market_hash_name for t in self.storage.paper_trades(now - PAPER_HORIZON)}
+
+    def _fetch(self, opts: ScanOptions) -> FeeSchedule:
+        if self.skinport is None or self.dmarket is None:
+            raise SourceError("Для загрузки цен нужны источники Skinport и DMarket")
+        now = self.clock()
+        sp_quotes = self.skinport.fetch_quotes(opts.app_id)
+        names = liquid(sp_quotes, opts.limit, opts.min_price, opts.max_price)
+        universe = set(names) | self._universe_extra(now)
+        self.storage.save_quotes(q for q in sp_quotes if q.market_hash_name in universe)
+        sp_sales = self.skinport.fetch_sales(opts.app_id)
+        self.storage.save_sales(s for s in sp_sales if _keep_sales(s, universe))
+        self.out(
+            f"Skinport: {len(sp_quotes)} предметов, сравниваю {len(names)} самых ликвидных "
+            f"от {opts.min_price} до {opts.max_price} EUR"
+        )
+
+        dm_names = list(dict.fromkeys([*names, *sorted(universe - set(names))]))
+        dm_quotes = self.dmarket.fetch_best_prices(dm_names, opts.app_id)
+        self.storage.save_quotes(dm_quotes)
+        self.out(
+            f"DMarket: запрошено {len(dm_names)}, с предложениями "
+            f"{sum(q.min_price is not None for q in dm_quotes)}"
+        )
+        schedule = self.schedule
+        try:
+            fee = self.dmarket.fetch_sell_fees(opts.app_id, "dmarket")[0]
+            self.out(f"Комиссия продавца DMarket из API: {fee.describe()}")
+            schedule = schedule.with_rules([fee], replace_marketplace="dmarket")
+        except SourceError as exc:
+            self.out(f"Комиссия продавца DMarket не получена ({exc}), беру из правил")
+        return schedule
+
+    def _verify_dmarket(self, names: list[str], app_id: int, now: datetime) -> None:
+        if not names or self.dmarket is None:
+            return
+        self.out(f"Проверяю реальные продажи DMarket: {len(names)} предметов (~{len(names)} с)")
+        stats = []
+        for name in names:
+            try:
+                deals = self.dmarket.fetch_last_sales(name, app_id)
+            except SourceError as exc:
+                self.out(f"  {name}: продажи не получены ({exc})")
+                continue
+            stats.append(stats_from_sales(deals, "dmarket", app_id, name, Currency.USD, now))
+        self.storage.save_sales(stats)
+
+    # ---------- уведомления ----------
+
+    def notify(self, found: list[Opportunity], now: datetime) -> int:
+        """Отправляет возможности, по которым не было уведомления за сутки.
+
+        Returns:
+            Сколько возможностей отправлено.
+        """
+        if self.telegram is None:
+            self.out("Telegram не настроен: уведомления не отправлены (skinedge telegram setup)")
+            return 0
+        floor = ScanConfig()
+        fresh = []
+        for opp in found:
+            r = opp.result
+            if r.roi < floor.min_roi or r.profit.amount < floor.min_profit:
+                continue
+            last = self.storage.last_notified(opp.name, r.buy_market, r.sell_market)
+            if last is None or now - last >= NOTIFY_COOLDOWN:
+                fresh.append(opp)
+        if not fresh:
+            self.out("Новых возможностей для уведомления нет")
+            return 0
+        batch = fresh[:NOTIFY_MAX]
+        bot, chat_id = self.telegram
+        try:
+            bot.send(chat_id, format_digest(batch, len(found)))
+        except TelegramError as exc:
+            self.out(f"Telegram: уведомление не отправлено ({exc})")
+            return 0
+        for opp in batch:
+            r = opp.result
+            self.storage.save_notification(
+                now, opp.name, r.buy_market, r.sell_market, r.profit.amount, r.roi
+            )
+        self.out(f"Отправлено в Telegram: {len(batch)} (без повторов за сутки)")
+        return len(batch)
+
+
+def _keep_sales(stats: SalesStats, universe: set[str]) -> bool:
+    return (
+        stats.market_hash_name in universe
+        and stats.version is None
+        and stats.window in SALES_WINDOWS
+    )

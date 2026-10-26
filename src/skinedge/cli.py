@@ -6,6 +6,7 @@ import logging
 import sys
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Annotated
 
@@ -17,14 +18,12 @@ from skinedge.fees.schedule import FeeSchedule, Payout
 from skinedge.finance.route import BALANCE, FeeLine, RouteCalculator, RouteResult
 from skinedge.fx import FxRates
 from skinedge.money import Currency, Money
-from skinedge.notify.message import format_digest
 from skinedge.notify.telegram import TelegramClient, TelegramError
-from skinedge.paper import CHECKPOINTS
-from skinedge.paper import evaluate as paper_evaluate
-from skinedge.paper import record as paper_record
-from skinedge.paper import summarize as paper_summarize
-from skinedge.quotes import Quote, SalesWindow
-from skinedge.scanner import Opportunity, ScanConfig, Scanner, stats_from_sales
+from skinedge.paper import CHECKPOINTS, build_report
+from skinedge.pipeline import Pipeline, ScanOptions
+from skinedge.quotes import Quote
+from skinedge.runner import MIN_EVERY, AlreadyRunning, Runner, RunOptions
+from skinedge.scanner import Opportunity, ScanConfig
 from skinedge.sources import ecb
 from skinedge.sources.base import SourceError
 from skinedge.sources.dmarket import DMarketSigner, DMarketSource
@@ -374,18 +373,19 @@ def item(
         storage.close()
 
 
-MARKETS = ("skinport", "dmarket")
-
-
 def _fx(settings: Settings, usd_per_eur: str | None) -> FxRates:
     if usd_per_eur is not None:
-        rate = _decimal(usd_per_eur, "--usd-per-eur")
-        return FxRates(rates={Currency.USD: rate}, spread=settings.fx_spread, source="cli")
+        return _manual_fx(settings, usd_per_eur)
     try:
         return ecb.fetch_rates(settings.fx_spread)
     except SourceError as exc:
         typer.echo(f"Не удалось получить курс ЕЦБ ({exc}). Укажи --usd-per-eur", err=True)
         raise typer.Exit(1) from exc
+
+
+def _manual_fx(settings: Settings, usd_per_eur: str) -> FxRates:
+    rate = _decimal(usd_per_eur, "--usd-per-eur")
+    return FxRates(rates={Currency.USD: rate}, spread=settings.fx_spread, source="cli")
 
 
 def render_opportunity(n: int, opp: Opportunity) -> str:
@@ -403,152 +403,6 @@ def render_opportunity(n: int, opp: Opportunity) -> str:
     return "\n".join(lines)
 
 
-def _trends(storage: Storage, since: datetime) -> dict[str, Decimal]:
-    """Изменение цены на Skinport: медиана продаж за 24ч к медиане за 30д − 1."""
-    day = storage.recent_sales("skinport", SalesWindow.H24, since)
-    month = storage.recent_sales("skinport", SalesWindow.D30, since)
-    out: dict[str, Decimal] = {}
-    for name, d in day.items():
-        m = month.get(name)
-        if d.median is None or d.volume < 3 or m is None or not m.median:
-            continue
-        out[name] = d.median / m.median - 1
-    return out
-
-
-def _verify_dmarket_sales(
-    storage: Storage, src: DMarketSource, names: list[str], app_id: int, now: datetime
-) -> None:
-    """Загружает последние сделки DMarket и сохраняет их статистику за 7 дней."""
-    if not names:
-        return
-    typer.echo(f"Проверяю реальные продажи DMarket: {len(names)} предметов (~{len(names)} с)")
-    stats = []
-    for name in names:
-        try:
-            sales = src.fetch_last_sales(name, app_id)
-        except SourceError as exc:
-            typer.echo(f"  {name}: продажи не получены ({exc})", err=True)
-            continue
-        stats.append(stats_from_sales(sales, "dmarket", app_id, name, Currency.USD, now))
-    storage.save_sales(stats)
-
-
-@app.command()
-def scan(
-    fetch_first: Annotated[
-        bool, typer.Option("--fetch/--no-fetch", help="Сначала загрузить свежие цены")
-    ] = True,
-    app_id: Annotated[int, typer.Option("--app-id")] = 730,
-    limit: Annotated[int, typer.Option(help="Сколько ликвидных предметов проверить")] = 300,
-    min_price: Annotated[str, typer.Option("--min-price", help="Мин. цена Skinport, EUR")] = "1",
-    max_price: Annotated[str, typer.Option("--max-price", help="Макс. цена Skinport, EUR")] = "500",
-    min_profit: Annotated[str, typer.Option("--min-profit", help="Мин. прибыль, EUR")] = "0.50",
-    min_roi: Annotated[str, typer.Option("--min-roi", help="Мин. ROI, 0.05 = 5%")] = "0.05",
-    max_age: Annotated[int, typer.Option("--max-age", help="Макс. возраст цен, мин")] = 30,
-    verify: Annotated[
-        int, typer.Option(help="Сколько кандидатов проверить по реальным сделкам DMarket")
-    ] = 40,
-    usd_per_eur: Annotated[
-        str | None, typer.Option("--usd-per-eur", help="Курс вручную вместо ЕЦБ")
-    ] = None,
-    top: Annotated[int, typer.Option(help="Сколько возможностей показать")] = 15,
-    paper: Annotated[
-        bool, typer.Option("--paper/--no-paper", help="Записать виртуальные сделки")
-    ] = True,
-    notify: Annotated[
-        bool, typer.Option("--notify/--no-notify", help="Отправить новые возможности в Telegram")
-    ] = True,
-    verbose: Annotated[bool, typer.Option("--verbose", "-v")] = False,
-) -> None:
-    """Ищет выгодные маршруты Skinport ↔ DMarket. Только анализ, без сделок."""
-    logging.basicConfig(level=logging.DEBUG if verbose else logging.WARNING)
-    _quiet_http()
-    settings = Settings()
-    schedule = FeeSchedule.load(settings.fee_rules_path)
-    fx = _fx(settings, usd_per_eur)
-    typer.echo(f"Курс: 1 EUR = {fx.rates[Currency.USD]} USD ({fx.source}), спред {_pct(fx.spread)}")
-    cfg = ScanConfig(
-        min_profit=_decimal(min_profit, "--min-profit"),
-        min_roi=_decimal(min_roi, "--min-roi"),
-        max_age=timedelta(minutes=max_age),
-    )
-    storage = Storage(settings.db_path)
-    try:
-        dm: DMarketSource | None = None
-        if fetch_first:
-            dm = _dmarket_source(settings)
-            try:
-                _fetch_skinport(storage, app_id, sales=True, show=0)
-                names = storage.liquid_names(
-                    "skinport",
-                    limit,
-                    _decimal(min_price, "--min-price"),
-                    _decimal(max_price, "--max-price"),
-                )
-                fee = _fetch_dmarket(storage, dm, names, app_id, show=0)
-            except SourceError as exc:
-                typer.echo(f"Ошибка источника: {exc}", err=True)
-                raise typer.Exit(1) from exc
-            if fee is not None:
-                schedule = schedule.with_rules([fee], replace_marketplace="dmarket")
-
-        now = datetime.now(UTC)
-        since = now - cfg.max_age
-        quotes = {m: storage.recent_quotes(m, since) for m in MARKETS}
-        scanner = Scanner(schedule, fx, cfg)
-        if dm is not None:
-            # Продажу на DMarket подтверждаем реальными сделками: минимальный лот
-            # без сделок может стоять месяцами и не говорит о спросе.
-            check = scanner.candidates(
-                "skinport", "dmarket", quotes["skinport"], quotes["dmarket"], now, verify
-            )
-            open_trades = {
-                t.market_hash_name
-                for t in storage.paper_trades(now - timedelta(days=8))
-                if t.sell_market == "dmarket"
-            }
-            _verify_dmarket_sales(
-                storage, dm, list(dict.fromkeys([*check, *sorted(open_trades)])), app_id, now
-            )
-            typer.echo("")
-
-        stats_since = now - timedelta(hours=6)
-        sales = {m: storage.recent_sales(m, SalesWindow.D7, stats_since) for m in MARKETS}
-        trends = _trends(storage, stats_since)
-        found: list[Opportunity] = []
-        for buy, sell in (("skinport", "dmarket"), ("dmarket", "skinport")):
-            found += scanner.scan(buy, sell, quotes[buy], quotes[sell], sales[sell], now, trends)
-        found.sort(key=lambda o: (not o.result.complete, -o.result.roi))
-        pairs = len(quotes["skinport"].keys() & quotes["dmarket"].keys())
-        typer.echo(
-            f"Сравнено предметов на обеих площадках: {pairs}. "
-            f"Возможностей: {len(found)} (полных расчётов {sum(o.result.complete for o in found)})"
-        )
-        if pairs == 0:
-            typer.echo("Нет свежих цен с обеих площадок. Запусти без --no-fetch.")
-        for n, opp in enumerate(found[:top], 1):
-            typer.echo("")
-            typer.echo(render_opportunity(n, opp))
-        if paper and found:
-            recorded = paper_record(storage, found, fx, now, ScanConfig())
-            typer.echo(
-                f"\nЗаписано виртуальных сделок: {recorded} "
-                "(только по стандартным порогам, повторы за сутки пропущены)"
-            )
-        if notify:
-            _notify(settings, storage, found, now)
-    finally:
-        storage.close()
-    typer.echo(
-        "\nЭто оценка по текущим ценам, а не гарантированная прибыль. Сделки не совершаются."
-    )
-
-
-NOTIFY_COOLDOWN = timedelta(hours=24)
-NOTIFY_MAX = 5
-
-
 def _telegram(settings: Settings) -> TelegramClient:
     if settings.telegram_bot_token is None:
         typer.echo(
@@ -562,35 +416,265 @@ def _telegram(settings: Settings) -> TelegramClient:
         raise typer.Exit(1) from exc
 
 
-def _notify(settings: Settings, storage: Storage, found: list[Opportunity], now: datetime) -> None:
-    """Отправляет в Telegram возможности, по которым ещё не было уведомления за сутки."""
+def _telegram_target(settings: Settings) -> tuple[TelegramClient, str] | None:
+    """Бот и чат для уведомлений или ``None``, если Telegram не настроен."""
     if settings.telegram_bot_token is None or not settings.telegram_chat_id:
-        typer.echo("Telegram не настроен: уведомления не отправлены (skinedge telegram setup)")
-        return
-    floor = ScanConfig()
-    fresh = []
-    for opp in found:
-        r = opp.result
-        if r.roi < floor.min_roi or r.profit.amount < floor.min_profit:
-            continue
-        last = storage.last_notified(opp.name, r.buy_market, r.sell_market)
-        if last is None or now - last >= NOTIFY_COOLDOWN:
-            fresh.append(opp)
-    if not fresh:
-        typer.echo("Новых возможностей для уведомления нет")
-        return
-    batch = fresh[:NOTIFY_MAX]
+        return None
     try:
-        _telegram(settings).send(settings.telegram_chat_id, format_digest(batch, len(found)))
-    except TelegramError as exc:
-        typer.echo(f"Telegram: уведомление не отправлено ({exc})", err=True)
-        return
-    for opp in batch:
-        r = opp.result
-        storage.save_notification(
-            now, opp.name, r.buy_market, r.sell_market, r.profit.amount, r.roi
+        bot = TelegramClient(settings.telegram_bot_token.get_secret_value())
+    except ValueError as exc:
+        typer.echo(f"Telegram: {exc}", err=True)
+        return None
+    return bot, settings.telegram_chat_id
+
+
+def _scan_options(
+    app_id: int,
+    limit: int,
+    min_price: str,
+    max_price: str,
+    min_profit: str,
+    min_roi: str,
+    max_age: int,
+    verify: int,
+    fetch: bool,
+    paper: bool,
+    notify: bool,
+) -> ScanOptions:
+    return ScanOptions(
+        app_id=app_id,
+        limit=limit,
+        min_price=_decimal(min_price, "--min-price"),
+        max_price=_decimal(max_price, "--max-price"),
+        config=ScanConfig(
+            min_profit=_decimal(min_profit, "--min-profit"),
+            min_roi=_decimal(min_roi, "--min-roi"),
+            max_age=timedelta(minutes=max_age),
+        ),
+        verify=verify,
+        fetch=fetch,
+        paper=paper,
+        notify=notify,
+    )
+
+
+AppId = Annotated[int, typer.Option("--app-id", help="Steam app_id (730 = CS2)")]
+Limit = Annotated[int, typer.Option(help="Сколько ликвидных предметов Skinport сравнивать")]
+MinPrice = Annotated[str, typer.Option("--min-price", help="Мин. цена Skinport, EUR")]
+MaxPrice = Annotated[str, typer.Option("--max-price", help="Макс. цена Skinport, EUR")]
+MinProfit = Annotated[str, typer.Option("--min-profit", help="Мин. прибыль, EUR")]
+MinRoi = Annotated[str, typer.Option("--min-roi", help="Мин. ROI, 0.05 = 5%")]
+Verify = Annotated[
+    int, typer.Option(help="Сколько кандидатов проверить по реальным сделкам DMarket")
+]
+UsdPerEur = Annotated[str | None, typer.Option("--usd-per-eur", help="Курс вручную вместо ЕЦБ")]
+Paper = Annotated[bool, typer.Option("--paper/--no-paper", help="Записывать виртуальные сделки")]
+Notify = Annotated[
+    bool, typer.Option("--notify/--no-notify", help="Отправлять новые возможности в Telegram")
+]
+Verbose = Annotated[bool, typer.Option("--verbose", "-v")]
+
+
+@app.command()
+def scan(
+    fetch_first: Annotated[
+        bool, typer.Option("--fetch/--no-fetch", help="Сначала загрузить свежие цены")
+    ] = True,
+    app_id: AppId = 730,
+    limit: Limit = 300,
+    min_price: MinPrice = "1",
+    max_price: MaxPrice = "500",
+    min_profit: MinProfit = "0.50",
+    min_roi: MinRoi = "0.05",
+    max_age: Annotated[int, typer.Option("--max-age", help="Макс. возраст цен, мин")] = 30,
+    verify: Verify = 40,
+    usd_per_eur: UsdPerEur = None,
+    top: Annotated[int, typer.Option(help="Сколько возможностей показать")] = 15,
+    paper: Paper = True,
+    notify: Notify = True,
+    verbose: Verbose = False,
+) -> None:
+    """Ищет выгодные маршруты Skinport ↔ DMarket. Только анализ, без сделок."""
+    logging.basicConfig(level=logging.DEBUG if verbose else logging.WARNING)
+    _quiet_http()
+    settings = Settings()
+    schedule = FeeSchedule.load(settings.fee_rules_path)
+    fx = _fx(settings, usd_per_eur)
+    typer.echo(f"Курс: 1 EUR = {fx.rates[Currency.USD]} USD ({fx.source}), спред {_pct(fx.spread)}")
+    opts = _scan_options(
+        app_id,
+        limit,
+        min_price,
+        max_price,
+        min_profit,
+        min_roi,
+        max_age,
+        verify,
+        fetch_first,
+        paper,
+        notify,
+    )
+    storage = Storage(settings.db_path)
+    try:
+        pipeline = Pipeline(
+            storage,
+            schedule,
+            fx,
+            skinport=SkinportSource() if fetch_first else None,
+            dmarket=_dmarket_source(settings) if fetch_first else None,
+            telegram=_telegram_target(settings) if notify else None,
+            out=typer.echo,
         )
-    typer.echo(f"Отправлено в Telegram: {len(batch)} (без повторов за сутки)")
+        try:
+            result = pipeline.scan(opts)
+        except SourceError as exc:
+            typer.echo(f"Ошибка источника: {exc}", err=True)
+            raise typer.Exit(1) from exc
+        found = result.found
+        typer.echo(
+            f"\nСравнено предметов на обеих площадках: {result.pairs}. "
+            f"Возможностей: {len(found)} (полных расчётов {sum(o.result.complete for o in found)})"
+        )
+        if result.pairs == 0:
+            typer.echo("Нет свежих цен с обеих площадок. Запусти без --no-fetch.")
+        for n, opp in enumerate(found[:top], 1):
+            typer.echo("")
+            typer.echo(render_opportunity(n, opp))
+        if paper and found:
+            recorded = pipeline.record(result)
+            typer.echo(
+                f"\nЗаписано виртуальных сделок: {recorded} "
+                "(только по стандартным порогам, повторы за сутки пропущены)"
+            )
+        if notify:
+            pipeline.notify(found, result.at)
+    finally:
+        storage.close()
+    typer.echo(
+        "\nЭто оценка по текущим ценам, а не гарантированная прибыль. Сделки не совершаются."
+    )
+
+
+def _run_logging(path: Path, verbose: bool) -> logging.Logger:
+    """Лог фонового запуска: консоль и файл с ротацией (5 файлов по 1 МБ)."""
+    _quiet_http()
+    logger = logging.getLogger("skinedge")
+    _close_handlers(logger)
+    logger.setLevel(logging.DEBUG if verbose else logging.INFO)
+    logger.propagate = False
+    console = logging.StreamHandler(sys.stdout)
+    console.setFormatter(logging.Formatter("%(asctime)s %(message)s", "%H:%M:%S"))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    file = RotatingFileHandler(path, maxBytes=1_000_000, backupCount=5, encoding="utf-8")
+    file.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    logger.addHandler(console)
+    logger.addHandler(file)
+    # Ожидание лимита запросов DMarket (раз в секунду) засоряет лог.
+    logging.getLogger("skinedge.sources").setLevel(logging.DEBUG if verbose else logging.WARNING)
+    return logger
+
+
+def _close_handlers(logger: logging.Logger) -> None:
+    for handler in list(logger.handlers):
+        logger.removeHandler(handler)
+        handler.close()
+
+
+@app.command("run")
+def run_command(
+    every: Annotated[int, typer.Option(help="Интервал между проходами, мин (не меньше 5)")] = 15,
+    iterations: Annotated[
+        int, typer.Option(help="Сколько проходов сделать (0 = пока не остановят)")
+    ] = 0,
+    app_id: AppId = 730,
+    limit: Limit = 300,
+    min_price: MinPrice = "1",
+    max_price: MaxPrice = "500",
+    min_profit: MinProfit = "0.50",
+    min_roi: MinRoi = "0.05",
+    verify: Verify = 40,
+    usd_per_eur: UsdPerEur = None,
+    paper: Paper = True,
+    notify: Notify = True,
+    report: Annotated[
+        bool, typer.Option("--report/--no-report", help="Ежедневный отчёт в Telegram")
+    ] = True,
+    report_hour: Annotated[
+        int, typer.Option("--report-hour", min=0, max=23, help="Час отчёта, местное время")
+    ] = 10,
+    force: Annotated[
+        bool, typer.Option(help="Запустить, даже если другой запуск недавно оставил отметку")
+    ] = False,
+    verbose: Verbose = False,
+) -> None:
+    """Сканирует по расписанию, пока не остановят (Ctrl+C). Только анализ, без сделок."""
+    if every < MIN_EVERY.seconds // 60:
+        raise typer.BadParameter(f"--every: не меньше {MIN_EVERY.seconds // 60} минут")
+    settings = Settings()
+    logger = _run_logging(settings.log_path, verbose)
+    schedule = FeeSchedule.load(settings.fee_rules_path)
+    telegram = _telegram_target(settings)
+    if telegram is None:
+        logger.warning("Telegram не настроен: уведомлений, отчёта и тревог не будет")
+    opts = _scan_options(
+        app_id,
+        limit,
+        min_price,
+        max_price,
+        min_profit,
+        min_roi,
+        30,
+        verify,
+        True,
+        paper,
+        notify and telegram is not None,
+    )
+    manual = _manual_fx(settings, usd_per_eur) if usd_per_eur is not None else None
+
+    def fx_source() -> FxRates:
+        return manual or ecb.fetch_rates(settings.fx_spread)
+
+    storage = Storage(settings.db_path)
+    pipeline = Pipeline(
+        storage,
+        schedule,
+        FxRates(rates={}, spread=settings.fx_spread),
+        skinport=SkinportSource(),
+        dmarket=_dmarket_source(settings),
+        telegram=telegram,
+        out=logger.info,
+    )
+    runner = Runner(
+        pipeline,
+        opts,
+        RunOptions(
+            every=timedelta(minutes=every),
+            iterations=iterations,
+            report_hour=report_hour if report else None,
+            force=force,
+        ),
+        fx_source,
+        settings.fx_spread,
+    )
+    logger.info(
+        "SkinEdge: проход каждые %d мин, лог %s. Только анализ, сделки не совершаются. "
+        "Остановить: Ctrl+C",
+        every,
+        settings.log_path,
+    )
+    try:
+        done = runner.run()
+        logger.info("Выполнено проходов: %d", done)
+    except AlreadyRunning as exc:
+        logger.error(
+            "Не запускаю: %s. Если он закрыт аварийно, подожди 20 минут или добавь --force", exc
+        )
+        raise typer.Exit(1) from exc
+    except KeyboardInterrupt:
+        logger.info("Остановлено")
+    finally:
+        storage.close()
+        _close_handlers(logger)
 
 
 telegram_app = typer.Typer(help="Уведомления в Telegram.")
@@ -678,24 +762,22 @@ def paper_report(
     now = datetime.now(UTC)
     storage = Storage(settings.db_path)
     try:
-        trades = storage.paper_trades(now - timedelta(days=days))
-        if not trades:
-            typer.echo("Виртуальных сделок нет. Они записываются командой skinedge scan.")
-            return
-        results = [
-            paper_evaluate(t, storage, schedule, settings.fx_spread, cfg, now) for t in trades
-        ]
+        report = build_report(
+            storage, schedule, settings.fx_spread, cfg, now, now - timedelta(days=days)
+        )
     finally:
         storage.close()
-
-    avg_signal = sum((t.roi for t in trades), Decimal(0)) / len(trades)
+    trades, results = report.trades, report.results
+    if not trades:
+        typer.echo("Виртуальных сделок нет. Они записываются командами skinedge scan и run.")
+        return
     complete = sum(t.complete for t in trades)
     typer.echo(
         f"Сигналов за {days} дн.: {len(trades)} (полных расчётов {complete}), "
-        f"средний ROI в момент сигнала {_pct(avg_signal)}"
+        f"средний ROI в момент сигнала {_pct(report.avg_signal_roi)}"
     )
     typer.echo("\nЧто показал бы рынок продажи позже (по тем же комиссиям и курсу):")
-    for s in paper_summarize(results):
+    for s in report.summaries:
         if s.evaluated == 0:
             typer.echo(f"  {s.label}: данных пока нет")
             continue
@@ -722,5 +804,6 @@ def paper_report(
         )
     typer.echo(
         "\nГлавная точка: 7д, когда купленный предмет можно передать. "
-        "Для контрольных точек нужны свежие цены: запускай skinedge scan хотя бы раз в день."
+        "Для контрольных точек нужны свежие цены: держи skinedge run включённым "
+        "или запускай skinedge scan хотя бы раз в день."
     )

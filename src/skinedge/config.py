@@ -14,6 +14,7 @@ class Settings(BaseSettings):
 
     Attributes:
         db_path: Файл базы SQLite с историей цен.
+        log_path: Лог фонового запуска ``skinedge run``.
         fee_rules_path: Свой файл правил комиссий вместо встроенного.
         fx_spread: Потери при конвертации валют (доля).
         csfloat_api_key: Ключ CSFloat API (после первой сделки на CSFloat).
@@ -29,6 +30,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="SKINEDGE_", env_file=".env", extra="ignore")
 
     db_path: Path = Path("data/skinedge.db")
+    log_path: Path = Path("logs/skinedge.log")
     fee_rules_path: Path | None = None
     fx_spread: Decimal = Decimal("0.01")
     csfloat_api_key: SecretStr | None = Field(

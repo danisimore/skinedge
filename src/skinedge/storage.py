@@ -10,7 +10,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -89,7 +89,26 @@ CREATE TABLE IF NOT EXISTS notifications (
     roi TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS notify_item ON notifications (market_hash_name, buy_market, sell_market);
+
+CREATE TABLE IF NOT EXISTS meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
+
+# Старые цены и продажи прореживаются: после RAW_DAYS остаётся одна запись предмета
+# за каждые THIN_HOURS часов, после KEEP_DAYS записи удаляются. Этого хватает для
+# контрольных точек виртуальных сделок (до 7 дней) в отчёте за 30 дней.
+RAW_DAYS = 2
+THIN_HOURS = 6
+KEEP_DAYS = 40
+
+# Ключ интервала прореживания: дата и номер THIN_HOURS-часового отрезка суток (UTC).
+_BUCKET = f"substr(fetched_at, 1, 11), CAST(substr(fetched_at, 12, 2) AS INTEGER) / {THIN_HOURS}"
+_GROUPS = {
+    "quotes": "source, market_hash_name",
+    "sales_stats": "source, market_hash_name, version, period",
+}
 
 
 def _d(value: Decimal | None) -> str | None:
@@ -429,6 +448,48 @@ class Storage:
                     str(roi),
                 ),
             )
+
+    def get_meta(self, key: str) -> str | None:
+        """Служебное значение (время последнего отчёта, сигнал фонового запуска)."""
+        row = self.conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+        return None if row is None else str(row[0])
+
+    def set_meta(self, key: str, value: str) -> None:
+        """Записывает служебное значение."""
+        with self._tx() as c:
+            c.execute(
+                "INSERT INTO meta (key, value) VALUES (?, ?)"
+                " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, value),
+            )
+
+    def delete_meta(self, key: str) -> None:
+        """Удаляет служебное значение."""
+        with self._tx() as c:
+            c.execute("DELETE FROM meta WHERE key = ?", (key,))
+
+    def prune(self, now: datetime) -> dict[str, int]:
+        """Прореживает и удаляет старые цены и продажи.
+
+        Виртуальные сделки и отметки об уведомлениях не трогаются.
+
+        Returns:
+            Сколько строк удалено из каждой таблицы.
+        """
+        drop = (now - timedelta(days=KEEP_DAYS)).isoformat()
+        thin = (now - timedelta(days=RAW_DAYS)).isoformat()
+        removed: dict[str, int] = {}
+        with self._tx() as c:
+            for table, group in _GROUPS.items():
+                n = c.execute(f"DELETE FROM {table} WHERE fetched_at < ?", (drop,)).rowcount
+                n += c.execute(
+                    f"DELETE FROM {table} WHERE fetched_at < ? AND id NOT IN ("
+                    f"  SELECT MIN(id) FROM {table} WHERE fetched_at < ?"
+                    f"  GROUP BY {group}, {_BUCKET})",
+                    (thin, thin),
+                ).rowcount
+                removed[table] = n
+        return removed
 
     def search_names(self, pattern: str, limit: int = 20) -> list[str]:
         """Названия предметов, содержащие подстроку (без учёта регистра)."""

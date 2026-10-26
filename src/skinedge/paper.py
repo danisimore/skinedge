@@ -221,3 +221,39 @@ def summarize(results: list[dict[str, Check]]) -> list[Summary]:
             )
         )
     return out
+
+
+@dataclass(frozen=True)
+class Report:
+    """Отчёт по виртуальным сделкам.
+
+    Attributes:
+        trades: Сделки за период, старые первыми.
+        results: Контрольные точки каждой сделки (в том же порядке).
+        summaries: Сводка по каждой контрольной точке.
+    """
+
+    trades: list[PaperTrade]
+    results: list[dict[str, Check]]
+    summaries: list[Summary]
+
+    @property
+    def avg_signal_roi(self) -> Decimal | None:
+        """Средний ROI в момент сигнала."""
+        if not self.trades:
+            return None
+        return sum((t.roi for t in self.trades), Decimal(0)) / len(self.trades)
+
+
+def build_report(
+    storage: Storage,
+    schedule: FeeSchedule,
+    spread: Decimal,
+    cfg: ScanConfig,
+    now: datetime,
+    since: datetime,
+) -> Report:
+    """Пересчитывает виртуальные сделки, записанные после ``since``."""
+    trades = storage.paper_trades(since)
+    results = [evaluate(t, storage, schedule, spread, cfg, now) for t in trades]
+    return Report(trades=trades, results=results, summaries=summarize(results))
