@@ -10,6 +10,7 @@
 
 CSFloat отдаёт 200 запросов в час, по одному на предмет, поэтому за проход
 проверяется только часть вселенной (``ScanOptions.csfloat``), по кругу.
+Market.CSGO и Lis-Skins отдают весь прайс-лист игры одним файлом.
 
 Продажу на DMarket и Market.CSGO сканер подтверждает реальными сделками: их
 история загружается по одному предмету и только для кандидатов, которые выгодны
@@ -39,12 +40,14 @@ from skinedge.scanner import Opportunity, ScanConfig, Scanner, stats_from_sales
 from skinedge.sources.base import SourceError
 from skinedge.sources.csfloat import CSFloatSource
 from skinedge.sources.dmarket import DMarketSource
+from skinedge.sources.lisskins import LisSkinsSource
 from skinedge.sources.marketcsgo import MarketCSGOSource
 from skinedge.sources.skinport import SkinportSource
 from skinedge.storage import Storage
 
-MARKETS = ("skinport", "dmarket", "csfloat", "marketcsgo")
-# Маршруты «купить → продать». На CSFloat только покупаем: истории продаж в API нет.
+MARKETS = ("skinport", "dmarket", "csfloat", "marketcsgo", "lisskins")
+# Маршруты «купить → продать». На CSFloat и Lis-Skins только покупаем: истории
+# продаж в их API нет.
 ROUTES = (
     ("skinport", "dmarket"),
     ("dmarket", "skinport"),
@@ -55,6 +58,9 @@ ROUTES = (
     ("skinport", "marketcsgo"),
     ("dmarket", "marketcsgo"),
     ("csfloat", "marketcsgo"),
+    ("lisskins", "skinport"),
+    ("lisskins", "dmarket"),
+    ("lisskins", "marketcsgo"),
 )
 CSFLOAT_OFFSET = "csfloat.offset"
 NOTIFY_COOLDOWN = timedelta(hours=24)
@@ -151,6 +157,7 @@ class Pipeline:
         dmarket: Источник DMarket (нужен при ``fetch``).
         csfloat: Источник CSFloat; ``None`` — CSFloat не проверяется.
         marketcsgo: Источник Market.CSGO; ``None`` — Market.CSGO не проверяется.
+        lisskins: Источник Lis-Skins; ``None`` — Lis-Skins не проверяется.
         telegram: Клиент Telegram и чат; ``None`` — уведомления не настроены.
         out: Куда писать ход работы (консоль или лог).
         clock: Текущее время (для тестов).
@@ -165,6 +172,7 @@ class Pipeline:
         dmarket: DMarketSource | None = None,
         csfloat: CSFloatSource | None = None,
         marketcsgo: MarketCSGOSource | None = None,
+        lisskins: LisSkinsSource | None = None,
         telegram: tuple[TelegramClient, str] | None = None,
         out: Callable[[str], None] = print,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
@@ -176,6 +184,7 @@ class Pipeline:
         self.dmarket = dmarket
         self.csfloat = csfloat
         self.marketcsgo = marketcsgo
+        self.lisskins = lisskins
         self.telegram = telegram
         self.out = out
         self.clock = clock
@@ -304,20 +313,35 @@ class Pipeline:
             schedule = schedule.with_rules([fee], replace_marketplace="dmarket")
         except SourceError as exc:
             self._say(f"Комиссия продавца DMarket не получена ({exc}), беру из правил")
-        if self.marketcsgo is not None:
-            try:
-                tm_quotes = self.marketcsgo.fetch_best_prices(dm_names, app_id)
-            except SourceError as exc:
-                self._say(f"Market.CSGO пропущен: {exc}")
-            else:
-                self.storage.save_quotes(tm_quotes)
-                self._say(
-                    f"Market.CSGO: запрошено {len(dm_names)}, с лотами "
-                    f"{sum(q.min_price is not None for q in tm_quotes)}"
-                )
+        self._fetch_price_list(self.marketcsgo, "Market.CSGO", dm_names, app_id)
+        self._fetch_price_list(self.lisskins, "Lis-Skins", dm_names, app_id)
         if app_id == CS2:  # CSFloat торгует только CS2
             self._fetch_csfloat(names, sp_sales, opts)
         return schedule
+
+    def _fetch_price_list(
+        self,
+        source: MarketCSGOSource | LisSkinsSource | None,
+        label: str,
+        names: list[str],
+        app_id: int,
+    ) -> None:
+        """Цены площадки, которая отдаёт прайс-лист игры одним файлом.
+
+        Сбой площадки не останавливает проход.
+        """
+        if source is None:
+            return
+        try:
+            quotes = source.fetch_best_prices(names, app_id)
+        except SourceError as exc:
+            self._say(f"{label} пропущен: {exc}")
+            return
+        self.storage.save_quotes(quotes)
+        self._say(
+            f"{label}: запрошено {len(names)}, с лотами "
+            f"{sum(q.min_price is not None for q in quotes)}"
+        )
 
     def _save_skinport_sales(
         self, app_id: int, sales: list[SalesStats], universe: set[str]

@@ -6,8 +6,9 @@ import logging
 import time
 from collections import deque
 from collections.abc import Callable
+from decimal import Decimal, InvalidOperation
 from email.utils import parsedate_to_datetime
-from typing import Protocol
+from typing import Any, Protocol
 
 import httpx
 
@@ -32,6 +33,23 @@ class RateLimited(SourceError):
     def __init__(self, message: str, retry_after: float | None) -> None:
         super().__init__(message)
         self.retry_after = retry_after
+
+
+def positive_price(value: Any) -> Decimal:
+    """Цена из JSON-ответа: строка или число (с ``parse_float=Decimal``), только больше нуля.
+
+    Raises:
+        ValueError: Если это не цена или она не больше нуля.
+    """
+    if isinstance(value, bool) or not isinstance(value, str | int | Decimal):
+        raise ValueError(f"ожидалась цена, получено {value!r}")
+    try:
+        price = Decimal(value)
+    except InvalidOperation as exc:
+        raise ValueError(f"ожидалась цена, получено {value!r}") from exc
+    if not price.is_finite() or price <= 0:
+        raise ValueError(f"цена должна быть больше нуля, получено {value!r}")
+    return price
 
 
 class MarketSource(Protocol):

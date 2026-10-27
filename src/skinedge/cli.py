@@ -30,6 +30,7 @@ from skinedge.sources import ecb
 from skinedge.sources.base import SourceError
 from skinedge.sources.csfloat import CSFloatSource
 from skinedge.sources.dmarket import DMarketSigner, DMarketSource
+from skinedge.sources.lisskins import LisSkinsSource
 from skinedge.sources.marketcsgo import MarketCSGOSource
 from skinedge.sources.skinport import SkinportSource
 from skinedge.storage import Storage
@@ -517,6 +518,13 @@ MarketCSGO = Annotated[
         help="Сравнивать с Market.CSGO (публичные цены и история продаж, ключ не нужен)",
     ),
 ]
+LisSkins = Annotated[
+    bool,
+    typer.Option(
+        "--lisskins/--no-lisskins",
+        help="Покупка на Lis-Skins (публичный прайс-лист, ключ не нужен)",
+    ),
+]
 
 
 def _csfloat_source(settings: Settings) -> CSFloatSource | None:
@@ -545,9 +553,12 @@ def scan(
     notify: Notify = True,
     csfloat: CSFloatItems = 40,
     marketcsgo: MarketCSGO = True,
+    lisskins: LisSkins = True,
     verbose: Verbose = False,
 ) -> None:
-    """Ищет выгодные маршруты между Skinport, DMarket и Market.CSGO (и CSFloat для CS2).
+    """Ищет выгодные маршруты между Skinport, DMarket и Market.CSGO.
+
+    Покупка также на Lis-Skins и на CSFloat (только CS2).
 
     Только анализ, без сделок.
     """
@@ -581,6 +592,7 @@ def scan(
             dmarket=_dmarket_source(settings) if fetch_first else None,
             csfloat=_csfloat_source(settings) if fetch_first and csfloat > 0 else None,
             marketcsgo=MarketCSGOSource() if fetch_first and marketcsgo else None,
+            lisskins=LisSkinsSource() if fetch_first and lisskins else None,
             telegram=_telegram_target(settings) if notify else None,
             out=typer.echo,
         )
@@ -666,6 +678,7 @@ def run_command(
     ] = False,
     csfloat: CSFloatItems = 40,
     marketcsgo: MarketCSGO = True,
+    lisskins: LisSkins = True,
     verbose: Verbose = False,
 ) -> None:
     """Сканирует по расписанию, пока не остановят (Ctrl+C). Только анализ, без сделок."""
@@ -705,6 +718,7 @@ def run_command(
         dmarket=_dmarket_source(settings),
         csfloat=_csfloat_source(settings) if csfloat > 0 else None,
         marketcsgo=MarketCSGOSource() if marketcsgo else None,
+        lisskins=LisSkinsSource() if lisskins else None,
         telegram=telegram,
         out=logger.info,
     )

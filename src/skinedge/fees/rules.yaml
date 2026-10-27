@@ -42,6 +42,15 @@ marketplaces:
     # Деньги от продажи доступны для вывода через 8 дней (steamdb, 02.07.2026).
     # csdb.gg пишет, что сразу; берём худший случай.
     settlement_days: 8
+  lisskins:
+    # Lis-Skins: только площадка покупки (продаж в API нет). Цены в USD.
+    # Для Dota 2 и Rust отдельных данных нет: считаем, что правила те же, что в CS2.
+    currency: USD
+    payout: cash
+    transfer_lock_days: 7
+    # Выплата продавцу после 7 дней Trade Protection (steamdb, 02.07.2026).
+    # Продажа на Lis-Skins не считается, поэтому правила вывода не заданы.
+    settlement_days: 7
   steam:
     # Валюта кошелька пользователя; для Финляндии EUR.
     currency: EUR
@@ -417,6 +426,29 @@ rules:
       steamdb: площадка за вывод не берёт, платёжный процессор удерживает 1–5% в
       зависимости от способа; csdb.gg: 5% за вывод на карту. Берём худший случай,
       проверить в аккаунте
+
+  # ---------- Lis-Skins ----------
+  - id: lisskins.buy
+    marketplace: lisskins
+    operation: buy
+    kind: percent
+    rate: "0"
+    currency: USD
+    verification: third_party
+    source: "https://steamdb.com/ru/markets/lis-skins"
+    verified_at: 2026-07-02
+    note: "Комиссия покупателя 0%; csdb.gg тоже пишет, что с покупателя не берут"
+
+  - id: lisskins.deposit.any
+    marketplace: lisskins
+    operation: deposit
+    kind: percent
+    rate: "0"
+    currency: USD
+    verification: third_party
+    source: "https://steamdb.com/ru/markets/lis-skins"
+    verified_at: 2026-07-02
+    note: "Комиссий за пополнение нет (карта, криптовалюта)"
 
   # ---------- Steam Community Market ----------
   - id: steam.buy

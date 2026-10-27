@@ -17,7 +17,8 @@
 | 7. CSFloat | Самые дешёвые лоты CSFloat, маршруты CSFloat → Skinport и CSFloat → DMarket |
 | 8. Dota 2 и Rust | Сканер и фоновый запуск проходят по CS2, Dota 2 и Rust (`--games`) |
 | 9. Market.CSGO | Цены и реальные продажи Market.CSGO (а также market.dota2.net и rust.tm), маршруты в обе стороны |
-| 10+ | Lis-Skins, Steam: ещё не реализованы |
+| 10. Lis-Skins | Публичный прайс-лист Lis-Skins (CS2, Dota 2, Rust), покупка на Lis-Skins с продажей на Skinport, DMarket или Market.CSGO |
+| 11+ | Steam: ещё не реализован |
 
 ## Установка
 
@@ -139,6 +140,26 @@ market.csgo.com (CS2), market.dota2.net (Dota 2), rust.tm (Rust).
 - Ссылок на предмет Market.CSGO в уведомлениях пока нет: формат адреса не проверен.
 - `--no-marketcsgo` отключает площадку.
 
+## Lis-Skins
+
+Ключ не нужен: используются публичные выгрузки цен из документации
+(<https://lis-skins.stoplight.io/docs/lis-skins/>), один файл на игру:
+`https://lis-skins.com/market_export_json/{csgo,dota2,rust}.json`.
+
+- Lis-Skins — только площадка покупки, как CSFloat: истории продаж в API нет.
+  Маршруты: Lis-Skins → Skinport, DMarket или Market.CSGO.
+- Цена покупки — `unlocked_price`, самый дешёвый лот, который можно вывести в Steam
+  сейчас. Лоты с блокировкой (`unlock_at`) бывают дешевле, но их нельзя забрать до
+  даты разблокировки.
+- Валюта в файле не указана. Цены в долларах: страница предмета показывает ту же
+  цену со знаком $ (проверено 27.10.2026). Что `price` — минимум всех лотов,
+  `count` — число лотов, а `unlocked_price` — минимум разблокированных, проверено
+  по полным спискам Dota 2 и Rust.
+- В уведомлении ссылка ведёт на страницу предмета Lis-Skins из выгрузки.
+- Комиссии (0% на покупку, пополнение без комиссии) взяты из обзора steamdb
+  (июль 2026) и требуют проверки в аккаунте. Для Dota 2 и Rust считаются такими же.
+- `--no-lisskins` отключает площадку.
+
 ## Сканер
 
 ```bash
@@ -149,7 +170,7 @@ skinedge scan --no-fetch            # искать по уже загружен�
 skinedge paper                      # что стало с прошлыми сигналами
 ```
 
-- `scan` загружает Skinport (цены и продажи), затем DMarket и Market.CSGO по самым
+- `scan` загружает Skinport (цены и продажи), затем DMarket, Market.CSGO и Lis-Skins по самым
   ликвидным предметам Skinport (`--limit`, `--min-price`, `--max-price`), берёт
   комиссию DMarket из API и курс ЕЦБ (`--usd-per-eur` задаёт курс вручную).
 - Игры сканируются по очереди и независимо (`--games`, по умолчанию `cs2,dota2,rust`),
@@ -160,8 +181,9 @@ skinedge paper                      # что стало с прошлыми си
 - Предметы сопоставляются по `market_hash_name`. Проверяются оба направления:
   Skinport → DMarket и DMarket → Skinport, покупка на Market.CSGO с продажей на
   Skinport или DMarket, продажа на Market.CSGO после покупки на Skinport, DMarket или
-  CSFloat, а также покупка на CSFloat с продажей на Skinport или DMarket (см. раздел
-  CSFloat). Деньги считаются уже лежащими на балансе.
+  CSFloat, а также покупка на CSFloat или Lis-Skins с продажей на Skinport, DMarket
+  или Market.CSGO (см. разделы CSFloat и Lis-Skins). Деньги считаются уже лежащими
+  на балансе.
 - Покупка: минимальная цена предложения. Продажа: минимальная цена на площадке
   продажи минус цент, но не выше медианы реальных продаж за 7 дней. Продаж за 7 дней
   должно быть не меньше 5, иначе предмет пропускается: цена лота без сделок ничего
@@ -266,7 +288,7 @@ skinedge run --iterations 2     # два прохода и выход, для п
 
 ## Комиссии требуют проверки
 
-Комиссии Skinport, CSFloat (в том числе 0% на покупку), Market.CSGO и Steam взяты из сторонних
+Комиссии Skinport, CSFloat (в том числе 0% на покупку), Market.CSGO, Lis-Skins и Steam взяты из сторонних
 обзоров (июль 2026) и имеют статус `third_party`. Комиссия продавца DMarket приходит
 из API, комиссии вывода DMarket проверены в аккаунте (`account`). После проверки в своих аккаунтах поменяй `verification` на `account` и обнови `verified_at`.
 Свой файл правил можно подключить через `SKINEDGE_FEE_RULES_PATH`.

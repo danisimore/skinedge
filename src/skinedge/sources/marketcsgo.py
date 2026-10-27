@@ -33,7 +33,7 @@ import logging
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from typing import Any
 
 import httpx
@@ -41,7 +41,12 @@ import httpx
 from skinedge.games import CS2, DOTA2, RUST
 from skinedge.money import Currency
 from skinedge.quotes import Quote, QuoteKind, Sale
-from skinedge.sources.base import RateLimiter, SourceError, request_with_retries
+from skinedge.sources.base import (
+    RateLimiter,
+    SourceError,
+    positive_price,
+    request_with_retries,
+)
 
 log = logging.getLogger(__name__)
 
@@ -57,19 +62,6 @@ def _host(app_id: int) -> str:
     if host is None:
         raise SourceError(f"Market.CSGO: игра app_id={app_id} не поддерживается")
     return host
-
-
-def _price(value: Any) -> Decimal:
-    """Цена из ответа: строка или число JSON, только положительная."""
-    if isinstance(value, bool) or not isinstance(value, str | int | Decimal):
-        raise ValueError(f"ожидалась цена, получено {value!r}")
-    try:
-        price = Decimal(value)
-    except InvalidOperation as exc:
-        raise ValueError(f"ожидалась цена, получено {value!r}") from exc
-    if not price.is_finite() or price <= 0:
-        raise ValueError(f"цена должна быть больше нуля, получено {value!r}")
-    return price
 
 
 class MarketCSGOSource:
@@ -141,7 +133,7 @@ class MarketCSGOSource:
                         market_hash_name=name,
                         currency=CURRENCY,
                         kind=QuoteKind.AGGREGATE,
-                        min_price=_price(row["price"]),
+                        min_price=positive_price(row["price"]),
                         quantity=int(row["volume"]),
                         fetched_at=fetched_at,
                     )
@@ -227,7 +219,7 @@ class MarketCSGOSource:
                         app_id=app_id,
                         market_hash_name=title,
                         currency=CURRENCY,
-                        price=_price(row[_EUR]),
+                        price=positive_price(row[_EUR]),
                         sold_at=datetime.fromtimestamp(stamp, tz=UTC),
                         fetched_at=fetched_at,
                     )
