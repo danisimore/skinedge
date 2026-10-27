@@ -30,6 +30,7 @@ from skinedge.sources import ecb
 from skinedge.sources.base import SourceError
 from skinedge.sources.csfloat import CSFloatSource
 from skinedge.sources.dmarket import DMarketSigner, DMarketSource
+from skinedge.sources.marketcsgo import MarketCSGOSource
 from skinedge.sources.skinport import SkinportSource
 from skinedge.storage import Storage
 
@@ -489,7 +490,11 @@ MaxPrice = Annotated[str, typer.Option("--max-price", help="Макс. цена S
 MinProfit = Annotated[str, typer.Option("--min-profit", help="Мин. прибыль, EUR")]
 MinRoi = Annotated[str, typer.Option("--min-roi", help="Мин. ROI, 0.05 = 5%")]
 Verify = Annotated[
-    int, typer.Option(help="Сколько кандидатов проверить по реальным сделкам DMarket")
+    int,
+    typer.Option(
+        help="Сколько кандидатов проверить по реальным сделкам DMarket и Market.CSGO "
+        "(для каждой площадки покупки)"
+    ),
 ]
 UsdPerEur = Annotated[str | None, typer.Option("--usd-per-eur", help="Курс вручную вместо ЕЦБ")]
 Paper = Annotated[bool, typer.Option("--paper/--no-paper", help="Записывать виртуальные сделки")]
@@ -503,6 +508,13 @@ CSFloatItems = Annotated[
         "--csfloat",
         help="Сколько предметов проверить на CSFloat за проход (0 — не проверять). "
         "Лимит CSFloat API: 200 запросов в час",
+    ),
+]
+MarketCSGO = Annotated[
+    bool,
+    typer.Option(
+        "--marketcsgo/--no-marketcsgo",
+        help="Сравнивать с Market.CSGO (публичные цены и история продаж, ключ не нужен)",
     ),
 ]
 
@@ -532,9 +544,10 @@ def scan(
     paper: Paper = True,
     notify: Notify = True,
     csfloat: CSFloatItems = 40,
+    marketcsgo: MarketCSGO = True,
     verbose: Verbose = False,
 ) -> None:
-    """Ищет выгодные маршруты Skinport ↔ DMarket (и CSFloat → обе для CS2).
+    """Ищет выгодные маршруты между Skinport, DMarket и Market.CSGO (и CSFloat для CS2).
 
     Только анализ, без сделок.
     """
@@ -567,6 +580,7 @@ def scan(
             skinport=SkinportSource() if fetch_first else None,
             dmarket=_dmarket_source(settings) if fetch_first else None,
             csfloat=_csfloat_source(settings) if fetch_first and csfloat > 0 else None,
+            marketcsgo=MarketCSGOSource() if fetch_first and marketcsgo else None,
             telegram=_telegram_target(settings) if notify else None,
             out=typer.echo,
         )
@@ -577,7 +591,7 @@ def scan(
             raise typer.Exit(1) from exc
         found = result.found
         typer.echo(
-            f"\nСравнено предметов на обеих площадках: {result.pairs}. "
+            f"\nСравнено предметов на Skinport и DMarket: {result.pairs}. "
             f"Возможностей: {len(found)} (полных расчётов {sum(o.result.complete for o in found)})"
         )
         if result.pairs == 0:
@@ -651,6 +665,7 @@ def run_command(
         bool, typer.Option(help="Запустить, даже если другой запуск недавно оставил отметку")
     ] = False,
     csfloat: CSFloatItems = 40,
+    marketcsgo: MarketCSGO = True,
     verbose: Verbose = False,
 ) -> None:
     """Сканирует по расписанию, пока не остановят (Ctrl+C). Только анализ, без сделок."""
@@ -689,6 +704,7 @@ def run_command(
         skinport=SkinportSource(),
         dmarket=_dmarket_source(settings),
         csfloat=_csfloat_source(settings) if csfloat > 0 else None,
+        marketcsgo=MarketCSGOSource() if marketcsgo else None,
         telegram=telegram,
         out=logger.info,
     )

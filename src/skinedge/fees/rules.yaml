@@ -33,6 +33,15 @@ marketplaces:
     item_url: "https://dmarket.com/ingame-items/item-list/csgo-skins?title={name}"
     # Способ вывода для расчёта; другой задаётся в .env: SKINEDGE_DMARKET_WITHDRAW=sepa
     withdraw_method: visa
+  marketcsgo:
+    # Market.CSGO (а также market.dota2.net и rust.tm — те же правила).
+    # SkinEdge берёт цены в евро: аккаунт Market.CSGO должен быть открыт в EUR.
+    currency: EUR
+    payout: cash
+    transfer_lock_days: 7
+    # Деньги от продажи доступны для вывода через 8 дней (steamdb, 02.07.2026).
+    # csdb.gg пишет, что сразу; берём худший случай.
+    settlement_days: 8
   steam:
     # Валюта кошелька пользователя; для Финляндии EUR.
     currency: EUR
@@ -360,6 +369,54 @@ rules:
     source: "Аккаунт DMarket, экран вывода средств"
     verified_at: 2026-10-26
     note: "Skrill, до 2000 USD за транзакцию"
+
+  # ---------- Market.CSGO ----------
+  # Для Dota 2 (market.dota2.net) и Rust (rust.tm) отдельных данных нет:
+  # считаем, что комиссии те же, что на market.csgo.com.
+  - id: marketcsgo.buy
+    marketplace: marketcsgo
+    operation: buy
+    kind: percent
+    rate: "0"
+    currency: EUR
+    verification: third_party
+    source: "https://steamdb.com/ru/markets/csgotm"
+    verified_at: 2026-07-02
+
+  - id: marketcsgo.sell
+    marketplace: marketcsgo
+    operation: sell
+    kind: percent
+    rate: "0.05"
+    currency: EUR
+    verification: third_party
+    source: "https://steamdb.com/ru/markets/csgotm"
+    verified_at: 2026-07-02
+    note: "5% с проданного предмета; по csdb.gg ставка одна для всех и не снижается"
+
+  - id: marketcsgo.deposit.any
+    marketplace: marketcsgo
+    operation: deposit
+    kind: percent
+    rate: "0"
+    currency: EUR
+    verification: unknown
+    note: "Комиссии пополнения не найдены"
+
+  - id: marketcsgo.withdraw.card
+    marketplace: marketcsgo
+    operation: withdraw
+    method: card
+    kind: percent
+    rate: "0.05"
+    currency: EUR
+    verification: third_party
+    source: "https://steamdb.com/ru/markets/csgotm"
+    verified_at: 2026-07-02
+    note: >-
+      steamdb: площадка за вывод не берёт, платёжный процессор удерживает 1–5% в
+      зависимости от способа; csdb.gg: 5% за вывод на карту. Берём худший случай,
+      проверить в аккаунте
 
   # ---------- Steam Community Market ----------
   - id: steam.buy

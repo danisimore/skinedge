@@ -11,6 +11,10 @@
 CSFloat отдаёт 200 запросов в час, по одному на предмет, поэтому за проход
 проверяется только часть вселенной (``ScanOptions.csfloat``), по кругу.
 
+Продажу на DMarket и Market.CSGO сканер подтверждает реальными сделками: их
+история загружается по одному предмету и только для кандидатов, которые выгодны
+даже по предварительной цене (минимальный лот без статистики продаж).
+
 Игры (CS2, Dota 2, Rust) сканируются по очереди и независимо: сбой одной игры
 не останавливает остальные, проход считается неудачным, только если не
 удалось ни одной.
@@ -35,22 +39,30 @@ from skinedge.scanner import Opportunity, ScanConfig, Scanner, stats_from_sales
 from skinedge.sources.base import SourceError
 from skinedge.sources.csfloat import CSFloatSource
 from skinedge.sources.dmarket import DMarketSource
+from skinedge.sources.marketcsgo import MarketCSGOSource
 from skinedge.sources.skinport import SkinportSource
 from skinedge.storage import Storage
 
-MARKETS = ("skinport", "dmarket", "csfloat")
+MARKETS = ("skinport", "dmarket", "csfloat", "marketcsgo")
 # Маршруты «купить → продать». На CSFloat только покупаем: истории продаж в API нет.
 ROUTES = (
     ("skinport", "dmarket"),
     ("dmarket", "skinport"),
     ("csfloat", "skinport"),
     ("csfloat", "dmarket"),
+    ("marketcsgo", "skinport"),
+    ("marketcsgo", "dmarket"),
+    ("skinport", "marketcsgo"),
+    ("dmarket", "marketcsgo"),
+    ("csfloat", "marketcsgo"),
 )
 CSFLOAT_OFFSET = "csfloat.offset"
 NOTIFY_COOLDOWN = timedelta(hours=24)
 NOTIFY_MAX = 5
 PAPER_HORIZON = timedelta(days=8)  # сделки, для которых ещё нужны контрольные точки
 STATS_MAX_AGE = timedelta(hours=6)
+# Файлы истории Market.CSGO обновляются примерно раз в час: чаще не перечитываем.
+MARKETCSGO_STATS_TTL = timedelta(hours=1)
 # Окна продаж, которые нужны сканеру: 7 дней для цены, 24 часа и 30 дней для тренда.
 SALES_WINDOWS = frozenset({SalesWindow.H24, SalesWindow.D7, SalesWindow.D30})
 
@@ -65,7 +77,8 @@ class ScanOptions:
         min_price: Нижняя граница цены Skinport, EUR.
         max_price: Верхняя граница цены Skinport, EUR.
         config: Пороги сканера.
-        verify: Сколько кандидатов на продажу в DMarket проверять по сделкам.
+        verify: Сколько кандидатов на продажу в DMarket и в Market.CSGO проверять
+            по сделкам (для каждой площадки покупки).
         fetch: Загружать свежие цены (иначе работать по сохранённым).
         paper: Записывать виртуальные сделки.
         notify: Отправлять уведомления.
@@ -137,6 +150,7 @@ class Pipeline:
         skinport: Источник Skinport (нужен при ``fetch``).
         dmarket: Источник DMarket (нужен при ``fetch``).
         csfloat: Источник CSFloat; ``None`` — CSFloat не проверяется.
+        marketcsgo: Источник Market.CSGO; ``None`` — Market.CSGO не проверяется.
         telegram: Клиент Telegram и чат; ``None`` — уведомления не настроены.
         out: Куда писать ход работы (консоль или лог).
         clock: Текущее время (для тестов).
@@ -150,6 +164,7 @@ class Pipeline:
         skinport: SkinportSource | None = None,
         dmarket: DMarketSource | None = None,
         csfloat: CSFloatSource | None = None,
+        marketcsgo: MarketCSGOSource | None = None,
         telegram: tuple[TelegramClient, str] | None = None,
         out: Callable[[str], None] = print,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
@@ -160,6 +175,7 @@ class Pipeline:
         self.skinport = skinport
         self.dmarket = dmarket
         self.csfloat = csfloat
+        self.marketcsgo = marketcsgo
         self.telegram = telegram
         self.out = out
         self.clock = clock
@@ -221,21 +237,15 @@ class Pipeline:
         if opts.fetch:
             # Продажу на DMarket подтверждаем реальными сделками: минимальный лот
             # без сделок может стоять месяцами и не говорит о спросе.
-            check = [
-                name
-                for buy in ("skinport", "csfloat")
-                for name in scanner.candidates(
-                    buy, "dmarket", quotes[buy], quotes["dmarket"], now, opts.verify
-                )
-            ]
-            open_trades = sorted(
-                {
-                    t.market_hash_name
-                    for t in self.storage.paper_trades(now - PAPER_HORIZON)
-                    if t.sell_market == "dmarket" and t.app_id == app_id
-                }
+            self._verify_dmarket(
+                self._to_verify(scanner, quotes, "dmarket", now, app_id, opts.verify), app_id, now
             )
-            self._verify_dmarket(list(dict.fromkeys([*check, *open_trades])), app_id, now)
+            if self.marketcsgo is not None:
+                self._verify_marketcsgo(
+                    self._to_verify(scanner, quotes, "marketcsgo", now, app_id, opts.verify),
+                    app_id,
+                    now,
+                )
 
         stats_since = now - STATS_MAX_AGE
         sales = {
@@ -291,6 +301,17 @@ class Pipeline:
             schedule = schedule.with_rules([fee], replace_marketplace="dmarket")
         except SourceError as exc:
             self._say(f"Комиссия продавца DMarket не получена ({exc}), беру из правил")
+        if self.marketcsgo is not None:
+            try:
+                tm_quotes = self.marketcsgo.fetch_best_prices(dm_names, app_id)
+            except SourceError as exc:
+                self._say(f"Market.CSGO пропущен: {exc}")
+            else:
+                self.storage.save_quotes(tm_quotes)
+                self._say(
+                    f"Market.CSGO: запрошено {len(dm_names)}, с лотами "
+                    f"{sum(q.min_price is not None for q in tm_quotes)}"
+                )
         if app_id == CS2:  # CSFloat торгует только CS2
             self._fetch_csfloat(names, sp_sales, opts)
         return schedule
@@ -330,6 +351,56 @@ class Pipeline:
             f"CSFloat: проверено {len(quotes)} из {len(pool)} предметов со спросом, "
             f"с лотами {sum(q.min_price is not None for q in quotes)}{left}"
         )
+
+    def _to_verify(
+        self,
+        scanner: Scanner,
+        quotes: dict[str, dict[str, Quote]],
+        sell: str,
+        now: datetime,
+        app_id: int,
+        limit: int,
+    ) -> list[str]:
+        """Предметы, чьи продажи на ``sell`` нужно проверить: кандидаты и открытые сделки."""
+        check = [
+            name
+            for buy, to in ROUTES
+            if to == sell
+            for name in scanner.candidates(buy, sell, quotes[buy], quotes[sell], now, limit)
+        ]
+        open_trades = sorted(
+            {
+                t.market_hash_name
+                for t in self.storage.paper_trades(now - PAPER_HORIZON)
+                if t.sell_market == sell and t.app_id == app_id
+            }
+        )
+        return list(dict.fromkeys([*check, *open_trades]))
+
+    def _verify_marketcsgo(self, names: list[str], app_id: int, now: datetime) -> None:
+        """Статистика продаж Market.CSGO по истории сделок, в евро.
+
+        Предметы, проверенные меньше часа назад, пропускаются. Ошибка прерывает
+        проверку: все файлы лежат на одном сервере.
+        """
+        if not names or self.marketcsgo is None:
+            return
+        fresh = self.storage.recent_sales(
+            "marketcsgo", SalesWindow.D7, now - MARKETCSGO_STATS_TTL, app_id
+        )
+        todo = [name for name in names if name not in fresh]
+        if not todo:
+            return
+        self._say(f"Проверяю реальные продажи Market.CSGO: {len(todo)} предметов")
+        stats = []
+        for name in todo:
+            try:
+                deals = self.marketcsgo.fetch_last_sales(name, app_id)
+            except SourceError as exc:
+                self._say(f"Market.CSGO: продажи не получены ({exc}), проверка прервана")
+                break
+            stats.append(stats_from_sales(deals, "marketcsgo", app_id, name, Currency.EUR, now))
+        self.storage.save_sales(stats)
 
     def _verify_dmarket(self, names: list[str], app_id: int, now: datetime) -> None:
         if not names or self.dmarket is None:

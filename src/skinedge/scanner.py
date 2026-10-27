@@ -24,7 +24,7 @@ from skinedge.quotes import Quote, QuoteKind, Sale, SalesStats, SalesWindow
 
 UNDERCUT = Decimal("0.01")  # выставляем на цент дешевле текущего минимума
 EPISODE_GAP = timedelta(minutes=5)  # сделки ближе друг к другу — одна массовая покупка
-EPISODIC = frozenset({"dmarket"})  # площадки, где volume — число эпизодов, а не штук
+EPISODIC = frozenset({"dmarket", "marketcsgo"})  # volume — число эпизодов, а не штук
 _PHASED = ("Doppler", "Gamma Doppler")
 
 
@@ -130,7 +130,7 @@ def stats_from_sales(
     now: datetime,
     window: SalesWindow = SalesWindow.D7,
 ) -> SalesStats:
-    """Статистика продаж за окно по списку отдельных сделок (для DMarket).
+    """Статистика продаж за окно по списку отдельных сделок (DMarket, Market.CSGO).
 
     Сделки считаются по эпизодам, а не по штукам: продажи, между которыми меньше
     ``EPISODE_GAP``, — это одна массовая покупка одного покупателя, и она не должна
