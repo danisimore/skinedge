@@ -44,6 +44,8 @@ log = logging.getLogger(__name__)
 
 BASE_URL = "https://api.dmarket.com"
 GAME_IDS = {730: "a8db", 570: "9a92", 252490: "rust", 440: "tf2"}
+# Раздел каталога на сайте DMarket для ссылки на предмет.
+CATALOG = {730: "csgo-skins", 570: "dota2-skins", 252490: "rust-skins"}
 DOCS_URL = "https://docs.dmarket.com/v1/swagger.html"
 SIGN_PREFIX = "dmar ed25519 "
 TITLES_PER_REQUEST = 100
@@ -238,7 +240,7 @@ class DMarketSource:
                         quantity=int(row.get("offerCount") or 0),
                         best_bid=_price_obj(row.get("orderBestPrice")),
                         bid_quantity=int(row.get("orderCount") or 0),
-                        url=f"https://dmarket.com/ingame-items/item-list/csgo-skins?title={quote(title)}",
+                        url=_item_url(app_id, title),
                         fetched_at=fetched_at,
                     )
                 )
@@ -331,3 +333,10 @@ class DMarketSource:
                 " (единицы minAmount не подтверждены)",
             )
         ]
+
+
+def _item_url(app_id: int, title: str) -> str | None:
+    catalog = CATALOG.get(app_id)
+    if catalog is None:
+        return None
+    return f"https://dmarket.com/ingame-items/item-list/{catalog}?title={quote(title)}"

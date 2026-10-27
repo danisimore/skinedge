@@ -40,7 +40,7 @@ marketplaces:
     # Купленное на рынке Steam можно перепродать только через 7 дней.
     transfer_lock_days: 7
     settlement_days: 0
-    item_url: "https://steamcommunity.com/market/listings/730/{name}"
+    item_url: "https://steamcommunity.com/market/listings/{app_id}/{name}"
 
 rules:
   # ---------- Skinport ----------

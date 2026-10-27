@@ -17,6 +17,8 @@ from skinedge.fees.models import FeeRule, Operation
 from skinedge.fees.schedule import FeeSchedule, Payout
 from skinedge.finance.route import BALANCE, FeeLine, RouteCalculator, RouteResult
 from skinedge.fx import FxRates
+from skinedge.games import GAMES, parse_games
+from skinedge.games import title as game_title
 from skinedge.money import Currency, Money
 from skinedge.notify.telegram import TelegramClient, TelegramError
 from skinedge.paper import CHECKPOINTS, build_report
@@ -405,7 +407,7 @@ def render_opportunity(n: int, opp: Opportunity) -> str:
     """Короткий отчёт по возможности."""
     r = opp.result
     lines = [
-        f"{n}. {opp.name}",
+        f"{n}. {opp.name} ({game_title(opp.buy_quote.app_id)})",
         f"   {r.buy_market} → {r.sell_market}: купить {r.buy_price}, "
         f"продать ~{r.sell_price} ({opp.sell.basis})",
         f"   стоимость {r.total_cost}, выручка {r.net_proceeds}, прибыль {r.profit}, "
@@ -442,7 +444,7 @@ def _telegram_target(settings: Settings) -> tuple[TelegramClient, str] | None:
 
 
 def _scan_options(
-    app_id: int,
+    games: str,
     limit: int,
     min_price: str,
     max_price: str,
@@ -455,8 +457,12 @@ def _scan_options(
     notify: bool,
     csfloat: int,
 ) -> ScanOptions:
+    try:
+        game_ids = parse_games(games)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--games") from exc
     return ScanOptions(
-        app_id=app_id,
+        games=game_ids,
         limit=limit,
         min_price=_decimal(min_price, "--min-price"),
         max_price=_decimal(max_price, "--max-price"),
@@ -473,8 +479,11 @@ def _scan_options(
     )
 
 
-AppId = Annotated[int, typer.Option("--app-id", help="Steam app_id (730 = CS2)")]
-Limit = Annotated[int, typer.Option(help="Сколько ликвидных предметов Skinport сравнивать")]
+Games = Annotated[str, typer.Option("--games", help=f"Игры через запятую: {', '.join(GAMES)}")]
+ALL_GAMES = ",".join(GAMES)
+Limit = Annotated[
+    int, typer.Option(help="Сколько ликвидных предметов Skinport сравнивать в каждой игре")
+]
 MinPrice = Annotated[str, typer.Option("--min-price", help="Мин. цена Skinport, EUR")]
 MaxPrice = Annotated[str, typer.Option("--max-price", help="Макс. цена Skinport, EUR")]
 MinProfit = Annotated[str, typer.Option("--min-profit", help="Мин. прибыль, EUR")]
@@ -510,7 +519,7 @@ def scan(
     fetch_first: Annotated[
         bool, typer.Option("--fetch/--no-fetch", help="Сначала загрузить свежие цены")
     ] = True,
-    app_id: AppId = 730,
+    games: Games = ALL_GAMES,
     limit: Limit = 300,
     min_price: MinPrice = "1",
     max_price: MaxPrice = "500",
@@ -525,15 +534,14 @@ def scan(
     csfloat: CSFloatItems = 40,
     verbose: Verbose = False,
 ) -> None:
-    """Ищет выгодные маршруты Skinport ↔ DMarket и CSFloat → обе. Только анализ, без сделок."""
+    """Ищет выгодные маршруты Skinport ↔ DMarket (и CSFloat → обе для CS2).
+
+    Только анализ, без сделок.
+    """
     logging.basicConfig(level=logging.DEBUG if verbose else logging.WARNING)
     _quiet_http()
-    settings = Settings()
-    schedule = _schedule(settings)
-    fx = _fx(settings, usd_per_eur)
-    typer.echo(f"Курс: 1 EUR = {fx.rates[Currency.USD]} USD ({fx.source}), спред {_pct(fx.spread)}")
     opts = _scan_options(
-        app_id,
+        games,
         limit,
         min_price,
         max_price,
@@ -546,6 +554,10 @@ def scan(
         notify,
         csfloat,
     )
+    settings = Settings()
+    schedule = _schedule(settings)
+    fx = _fx(settings, usd_per_eur)
+    typer.echo(f"Курс: 1 EUR = {fx.rates[Currency.USD]} USD ({fx.source}), спред {_pct(fx.spread)}")
     storage = Storage(settings.db_path)
     try:
         pipeline = Pipeline(
@@ -619,7 +631,7 @@ def run_command(
     iterations: Annotated[
         int, typer.Option(help="Сколько проходов сделать (0 = пока не остановят)")
     ] = 0,
-    app_id: AppId = 730,
+    games: Games = ALL_GAMES,
     limit: Limit = 300,
     min_price: MinPrice = "1",
     max_price: MaxPrice = "500",
@@ -651,7 +663,7 @@ def run_command(
     if telegram is None:
         logger.warning("Telegram не настроен: уведомлений, отчёта и тревог не будет")
     opts = _scan_options(
-        app_id,
+        games,
         limit,
         min_price,
         max_price,
@@ -835,7 +847,8 @@ def paper_report(
             else:
                 marks.append(f"{label} {_pct(c.roi)}")
         typer.echo(
-            f"  {t.created_at:%m-%d %H:%M} {t.market_hash_name}: {t.buy_market} → "
+            f"  {t.created_at:%m-%d %H:%M} {t.market_hash_name} ({game_title(t.app_id)}): "
+            f"{t.buy_market} → "
             f"{t.sell_market}, сигнал {_pct(t.roi)}; " + ", ".join(marks)
         )
     typer.echo(

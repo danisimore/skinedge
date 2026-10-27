@@ -112,7 +112,7 @@ def record(
         r = opp.result
         if r.roi < floor.min_roi or r.profit.amount < floor.min_profit:
             continue
-        last = storage.last_paper(opp.name, opp.result.buy_market, opp.result.sell_market)
+        last = storage.last_paper(opp.name, r.buy_market, r.sell_market, opp.buy_quote.app_id)
         if last is not None and now - last < COOLDOWN:
             continue
         storage.save_paper(PaperTrade.from_opportunity(opp, fx, now))
@@ -164,10 +164,12 @@ def evaluate(
         at = trade.created_at + delta
         if at > now:
             break
-        quote = storage.quote_after(trade.market_hash_name, trade.sell_market, at)
+        quote = storage.quote_after(trade.market_hash_name, trade.sell_market, at, trade.app_id)
         if quote is None or quote.fetched_at - at > timedelta(days=1):
             continue  # нет данных около контрольной точки
-        sales = storage.sales_after(trade.market_hash_name, trade.sell_market, SalesWindow.D7, at)
+        sales = storage.sales_after(
+            trade.market_hash_name, trade.sell_market, SalesWindow.D7, at, trade.app_id
+        )
         est = estimate_sell(quote, sales, cfg)
         if est is None:
             checks[label] = Check(label, False, None, None, None)

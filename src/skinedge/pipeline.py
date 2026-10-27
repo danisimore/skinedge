@@ -10,6 +10,10 @@
 
 CSFloat отдаёт 200 запросов в час, по одному на предмет, поэтому за проход
 проверяется только часть вселенной (``ScanOptions.csfloat``), по кругу.
+
+Игры (CS2, Dota 2, Rust) сканируются по очереди и независимо: сбой одной игры
+не останавливает остальные, проход считается неудачным, только если не
+удалось ни одной.
 """
 
 from __future__ import annotations
@@ -21,6 +25,7 @@ from decimal import Decimal
 
 from skinedge.fees.schedule import FeeSchedule
 from skinedge.fx import FxRates
+from skinedge.games import CS2, title
 from skinedge.money import Currency
 from skinedge.notify.message import format_digest
 from skinedge.notify.telegram import TelegramClient, TelegramError
@@ -55,8 +60,8 @@ class ScanOptions:
     """Параметры прохода.
 
     Attributes:
-        app_id: Steam app_id игры.
-        limit: Сколько самых ликвидных предметов Skinport сравнивать.
+        games: Steam app_id игр, по очереди.
+        limit: Сколько самых ликвидных предметов Skinport сравнивать в каждой игре.
         min_price: Нижняя граница цены Skinport, EUR.
         max_price: Верхняя граница цены Skinport, EUR.
         config: Пороги сканера.
@@ -67,7 +72,7 @@ class ScanOptions:
         csfloat: Сколько предметов проверить на CSFloat за проход (0 — не проверять).
     """
 
-    app_id: int = 730
+    games: tuple[int, ...] = (CS2,)
     limit: int = 300
     min_price: Decimal = Decimal("1")
     max_price: Decimal = Decimal("500")
@@ -86,7 +91,7 @@ class ScanResult:
     Attributes:
         at: Момент скана.
         found: Найденные возможности, лучшие первыми.
-        pairs: Сколько предметов сравнено на обеих площадках.
+        pairs: Сколько предметов сравнено на Skinport и DMarket (во всех играх).
         recorded: Сколько виртуальных сделок записано.
         notified: Сколько возможностей отправлено в Telegram.
     """
@@ -109,10 +114,10 @@ def liquid(quotes: list[Quote], limit: int, min_price: Decimal, max_price: Decim
     return [q.market_hash_name for q in eligible[:limit]]
 
 
-def trends(storage: Storage, since: datetime) -> dict[str, Decimal]:
+def trends(storage: Storage, since: datetime, app_id: int = CS2) -> dict[str, Decimal]:
     """Изменение цены на Skinport: медиана продаж за 24ч к медиане за 30д − 1."""
-    day = storage.recent_sales("skinport", SalesWindow.H24, since)
-    month = storage.recent_sales("skinport", SalesWindow.D30, since)
+    day = storage.recent_sales("skinport", SalesWindow.H24, since, app_id)
+    month = storage.recent_sales("skinport", SalesWindow.D30, since, app_id)
     out: dict[str, Decimal] = {}
     for name, d in day.items():
         m = month.get(name)
@@ -158,6 +163,7 @@ class Pipeline:
         self.telegram = telegram
         self.out = out
         self.clock = clock
+        self._prefix = ""  # название игры в сообщениях, когда игр несколько
 
     def run(self, opts: ScanOptions) -> ScanResult:
         """Полный проход: скан, журнал виртуальных сделок, уведомление.
@@ -173,18 +179,44 @@ class Pipeline:
         return result
 
     def scan(self, opts: ScanOptions) -> ScanResult:
-        """Загружает цены (если ``fetch``) и ищет возможности. Ничего не отправляет.
+        """Загружает цены (если ``fetch``) и ищет возможности во всех играх.
+
+        Ничего не отправляет. Сбой одной игры пишется в ``out``, остальные игры
+        сканируются дальше.
 
         Raises:
-            SourceError: Если площадка не отдала цены.
+            SourceError: Если не удалось просканировать ни одной игры.
         """
+        found: list[Opportunity] = []
+        pairs = 0
+        errors: list[str] = []
+        for app_id in opts.games:
+            self._prefix = f"{title(app_id)} · " if len(opts.games) > 1 else ""
+            try:
+                game_found, game_pairs = self._scan_game(opts, app_id)
+            except SourceError as exc:
+                if len(opts.games) == 1:
+                    raise
+                errors.append(f"{title(app_id)}: {exc}")
+                self._say(f"игра пропущена: {exc}")
+                continue
+            finally:
+                self._prefix = ""
+            found += game_found
+            pairs += game_pairs
+        if errors and len(errors) == len(opts.games):
+            raise SourceError("; ".join(errors))
+        found.sort(key=lambda o: (not o.result.complete, -o.result.roi))
+        return ScanResult(at=self.clock(), found=found, pairs=pairs)
+
+    def _scan_game(self, opts: ScanOptions, app_id: int) -> tuple[list[Opportunity], int]:
         cfg = opts.config
         schedule = self.schedule
         if opts.fetch:
-            schedule = self._fetch(opts)
+            schedule = self._fetch(opts, app_id)
 
         now = self.clock()
-        quotes = {m: self.storage.recent_quotes(m, now - cfg.max_age) for m in MARKETS}
+        quotes = {m: self.storage.recent_quotes(m, now - cfg.max_age, app_id) for m in MARKETS}
         scanner = Scanner(schedule, self.fx, cfg)
         if opts.fetch:
             # Продажу на DMarket подтверждаем реальными сделками: минимальный лот
@@ -200,22 +232,20 @@ class Pipeline:
                 {
                     t.market_hash_name
                     for t in self.storage.paper_trades(now - PAPER_HORIZON)
-                    if t.sell_market == "dmarket"
+                    if t.sell_market == "dmarket" and t.app_id == app_id
                 }
             )
-            self._verify_dmarket(list(dict.fromkeys([*check, *open_trades])), opts.app_id, now)
+            self._verify_dmarket(list(dict.fromkeys([*check, *open_trades])), app_id, now)
 
         stats_since = now - STATS_MAX_AGE
-        sales = {m: self.storage.recent_sales(m, SalesWindow.D7, stats_since) for m in MARKETS}
-        changes = trends(self.storage, stats_since)
-        result = ScanResult(at=now)
+        sales = {
+            m: self.storage.recent_sales(m, SalesWindow.D7, stats_since, app_id) for m in MARKETS
+        }
+        changes = trends(self.storage, stats_since, app_id)
+        found: list[Opportunity] = []
         for buy, sell in ROUTES:
-            result.found += scanner.scan(
-                buy, sell, quotes[buy], quotes[sell], sales[sell], now, changes
-            )
-        result.found.sort(key=lambda o: (not o.result.complete, -o.result.roi))
-        result.pairs = len(quotes["skinport"].keys() & quotes["dmarket"].keys())
-        return result
+            found += scanner.scan(buy, sell, quotes[buy], quotes[sell], sales[sell], now, changes)
+        return found, len(quotes["skinport"].keys() & quotes["dmarket"].keys())
 
     def record(self, result: ScanResult) -> int:
         """Записывает виртуальные сделки по стандартным порогам. Возвращает их число."""
@@ -225,43 +255,48 @@ class Pipeline:
 
     # ---------- загрузка ----------
 
-    def _universe_extra(self, now: datetime) -> set[str]:
-        return {t.market_hash_name for t in self.storage.paper_trades(now - PAPER_HORIZON)}
+    def _say(self, text: str) -> None:
+        self.out(self._prefix + text)
 
-    def _fetch(self, opts: ScanOptions) -> FeeSchedule:
+    def _universe_extra(self, now: datetime, app_id: int) -> set[str]:
+        trades = self.storage.paper_trades(now - PAPER_HORIZON)
+        return {t.market_hash_name for t in trades if t.app_id == app_id}
+
+    def _fetch(self, opts: ScanOptions, app_id: int) -> FeeSchedule:
         if self.skinport is None or self.dmarket is None:
             raise SourceError("Для загрузки цен нужны источники Skinport и DMarket")
         now = self.clock()
-        sp_quotes = self.skinport.fetch_quotes(opts.app_id)
+        sp_quotes = self.skinport.fetch_quotes(app_id)
         names = liquid(sp_quotes, opts.limit, opts.min_price, opts.max_price)
-        universe = set(names) | self._universe_extra(now)
+        universe = set(names) | self._universe_extra(now, app_id)
         self.storage.save_quotes(q for q in sp_quotes if q.market_hash_name in universe)
-        sp_sales = self.skinport.fetch_sales(opts.app_id)
+        sp_sales = self.skinport.fetch_sales(app_id)
         self.storage.save_sales(s for s in sp_sales if _keep_sales(s, universe))
-        self.out(
+        self._say(
             f"Skinport: {len(sp_quotes)} предметов, сравниваю {len(names)} самых ликвидных "
             f"от {opts.min_price} до {opts.max_price} EUR"
         )
 
         dm_names = list(dict.fromkeys([*names, *sorted(universe - set(names))]))
-        dm_quotes = self.dmarket.fetch_best_prices(dm_names, opts.app_id)
+        dm_quotes = self.dmarket.fetch_best_prices(dm_names, app_id)
         self.storage.save_quotes(dm_quotes)
-        self.out(
+        self._say(
             f"DMarket: запрошено {len(dm_names)}, с предложениями "
             f"{sum(q.min_price is not None for q in dm_quotes)}"
         )
         schedule = self.schedule
         try:
-            fee = self.dmarket.fetch_sell_fees(opts.app_id, "dmarket")[0]
-            self.out(f"Комиссия продавца DMarket из API: {fee.describe()}")
+            fee = self.dmarket.fetch_sell_fees(app_id, "dmarket")[0]
+            self._say(f"Комиссия продавца DMarket из API: {fee.describe()}")
             schedule = schedule.with_rules([fee], replace_marketplace="dmarket")
         except SourceError as exc:
-            self.out(f"Комиссия продавца DMarket не получена ({exc}), беру из правил")
-        self._fetch_csfloat(names, sp_sales, opts)
+            self._say(f"Комиссия продавца DMarket не получена ({exc}), беру из правил")
+        if app_id == CS2:  # CSFloat торгует только CS2
+            self._fetch_csfloat(names, sp_sales, opts)
         return schedule
 
     def _fetch_csfloat(self, names: list[str], sales: list[SalesStats], opts: ScanOptions) -> None:
-        """Проверяет на CSFloat очередную порцию предметов, у которых есть спрос.
+        """Проверяет на CSFloat очередную порцию предметов CS2, у которых есть спрос.
 
         Сбой CSFloat не останавливает проход: остальные площадки важнее.
         """
@@ -280,9 +315,9 @@ class Pipeline:
         start = int(self.storage.get_meta(CSFLOAT_OFFSET) or 0) % len(pool)
         batch = (pool[start:] + pool[:start])[: opts.csfloat]
         try:
-            quotes = self.csfloat.fetch_lowest(batch, opts.app_id)
+            quotes = self.csfloat.fetch_lowest(batch, CS2)
         except SourceError as exc:
-            self.out(f"CSFloat пропущен: {exc}")
+            self._say(f"CSFloat пропущен: {exc}")
             return
         self.storage.save_quotes(quotes)
         self.storage.set_meta(CSFLOAT_OFFSET, str(start + len(quotes)))
@@ -291,7 +326,7 @@ class Pipeline:
             if self.csfloat.remaining is None
             else f", лимит API: осталось {self.csfloat.remaining}"
         )
-        self.out(
+        self._say(
             f"CSFloat: проверено {len(quotes)} из {len(pool)} предметов со спросом, "
             f"с лотами {sum(q.min_price is not None for q in quotes)}{left}"
         )
@@ -299,13 +334,13 @@ class Pipeline:
     def _verify_dmarket(self, names: list[str], app_id: int, now: datetime) -> None:
         if not names or self.dmarket is None:
             return
-        self.out(f"Проверяю реальные продажи DMarket: {len(names)} предметов (~{len(names)} с)")
+        self._say(f"Проверяю реальные продажи DMarket: {len(names)} предметов (~{len(names)} с)")
         stats = []
         for name in names:
             try:
                 deals = self.dmarket.fetch_last_sales(name, app_id)
             except SourceError as exc:
-                self.out(f"  {name}: продажи не получены ({exc})")
+                self._say(f"  {name}: продажи не получены ({exc})")
                 continue
             stats.append(stats_from_sales(deals, "dmarket", app_id, name, Currency.USD, now))
         self.storage.save_sales(stats)
@@ -327,7 +362,9 @@ class Pipeline:
             r = opp.result
             if r.roi < floor.min_roi or r.profit.amount < floor.min_profit:
                 continue
-            last = self.storage.last_notified(opp.name, r.buy_market, r.sell_market)
+            last = self.storage.last_notified(
+                opp.name, r.buy_market, r.sell_market, opp.buy_quote.app_id
+            )
             if last is None or now - last >= NOTIFY_COOLDOWN:
                 fresh.append(opp)
         if not fresh:
@@ -343,7 +380,13 @@ class Pipeline:
         for opp in batch:
             r = opp.result
             self.storage.save_notification(
-                now, opp.name, r.buy_market, r.sell_market, r.profit.amount, r.roi
+                now,
+                opp.name,
+                r.buy_market,
+                r.sell_market,
+                r.profit.amount,
+                r.roi,
+                opp.buy_quote.app_id,
             )
         self.out(f"Отправлено в Telegram: {len(batch)} (без повторов за сутки)")
         return len(batch)

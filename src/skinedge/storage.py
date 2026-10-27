@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
+from skinedge.games import CS2
 from skinedge.money import Currency
 from skinedge.paper import MODEL, PaperTrade
 from skinedge.quotes import Quote, QuoteKind, SalesStats, SalesWindow
@@ -86,7 +87,8 @@ CREATE TABLE IF NOT EXISTS notifications (
     buy_market TEXT NOT NULL,
     sell_market TEXT NOT NULL,
     profit_eur TEXT NOT NULL,
-    roi TEXT NOT NULL
+    roi TEXT NOT NULL,
+    app_id INTEGER NOT NULL DEFAULT 730
 );
 CREATE INDEX IF NOT EXISTS notify_item ON notifications (market_hash_name, buy_market, sell_market);
 
@@ -106,8 +108,8 @@ KEEP_DAYS = 40
 # Ключ интервала прореживания: дата и номер THIN_HOURS-часового отрезка суток (UTC).
 _BUCKET = f"substr(fetched_at, 1, 11), CAST(substr(fetched_at, 12, 2) AS INTEGER) / {THIN_HOURS}"
 _GROUPS = {
-    "quotes": "source, market_hash_name",
-    "sales_stats": "source, market_hash_name, version, period",
+    "quotes": "source, app_id, market_hash_name",
+    "sales_stats": "source, app_id, market_hash_name, version, period",
 }
 
 
@@ -151,6 +153,7 @@ class Storage:
         """Обновляет базу, созданную прежними версиями."""
         columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(quotes)")}
         paper_columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(paper_trades)")}
+        notify_columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(notifications)")}
         version = self.conn.execute("PRAGMA user_version").fetchone()[0]
         with self._tx() as c:
             if "best_bid" not in columns:
@@ -159,6 +162,11 @@ class Storage:
                 c.execute("ALTER TABLE quotes ADD COLUMN bid_quantity INTEGER")
             if "model" not in paper_columns:
                 c.execute("ALTER TABLE paper_trades ADD COLUMN model INTEGER NOT NULL DEFAULT 1")
+            if "app_id" not in notify_columns:
+                # До Dota 2 и Rust уведомления были только по CS2.
+                c.execute(
+                    "ALTER TABLE notifications ADD COLUMN app_id INTEGER NOT NULL DEFAULT 730"
+                )
             if version < 1:
                 # Версия 50d50f5 записывала цены DMarket в центах как доллары (×100).
                 c.execute("DELETE FROM quotes WHERE source = 'dmarket'")
@@ -300,45 +308,53 @@ class Storage:
                 break
         return names
 
-    def recent_quotes(self, source: str, since: datetime) -> dict[str, Quote]:
-        """Последняя котировка каждого предмета площадки, полученная не раньше ``since``."""
+    def recent_quotes(self, source: str, since: datetime, app_id: int = CS2) -> dict[str, Quote]:
+        """Последняя котировка каждого предмета игры на площадке, не старше ``since``."""
         cur = self.conn.execute(
-            "SELECT * FROM quotes WHERE source = ? AND fetched_at >= ? ORDER BY fetched_at",
-            (source, since.isoformat()),
+            "SELECT * FROM quotes WHERE source = ? AND app_id = ? AND fetched_at >= ?"
+            " ORDER BY fetched_at",
+            (source, app_id, since.isoformat()),
         )
         return {r["market_hash_name"]: self._quote(r) for r in cur}
 
     def recent_sales(
-        self, source: str, window: SalesWindow, since: datetime
+        self, source: str, window: SalesWindow, since: datetime, app_id: int = CS2
     ) -> dict[str, SalesStats]:
-        """Последняя статистика продаж каждого предмета за окно ``window``.
+        """Последняя статистика продаж каждого предмета игры за окно ``window``.
 
         Берутся только строки без варианта (``version``): сводка по всему названию.
         """
         cur = self.conn.execute(
-            "SELECT * FROM sales_stats WHERE source = ? AND period = ? AND version IS NULL"
-            " AND fetched_at >= ? ORDER BY fetched_at",
-            (source, window.value, since.isoformat()),
+            "SELECT * FROM sales_stats WHERE source = ? AND app_id = ? AND period = ?"
+            " AND version IS NULL AND fetched_at >= ? ORDER BY fetched_at",
+            (source, app_id, window.value, since.isoformat()),
         )
         return {r["market_hash_name"]: self._sales(r) for r in cur}
 
-    def quote_after(self, market_hash_name: str, source: str, at: datetime) -> Quote | None:
+    def quote_after(
+        self, market_hash_name: str, source: str, at: datetime, app_id: int = CS2
+    ) -> Quote | None:
         """Первая котировка предмета, полученная в момент ``at`` или позже."""
         row = self.conn.execute(
-            "SELECT * FROM quotes WHERE market_hash_name = ? AND source = ? AND fetched_at >= ?"
-            " ORDER BY fetched_at LIMIT 1",
-            (market_hash_name, source, at.isoformat()),
+            "SELECT * FROM quotes WHERE market_hash_name = ? AND source = ? AND app_id = ?"
+            " AND fetched_at >= ? ORDER BY fetched_at LIMIT 1",
+            (market_hash_name, source, app_id, at.isoformat()),
         ).fetchone()
         return None if row is None else self._quote(row)
 
     def sales_after(
-        self, market_hash_name: str, source: str, window: SalesWindow, at: datetime
+        self,
+        market_hash_name: str,
+        source: str,
+        window: SalesWindow,
+        at: datetime,
+        app_id: int = CS2,
     ) -> SalesStats | None:
         """Первая статистика продаж предмета, полученная в момент ``at`` или позже."""
         row = self.conn.execute(
-            "SELECT * FROM sales_stats WHERE market_hash_name = ? AND source = ? AND period = ?"
-            " AND version IS NULL AND fetched_at >= ? ORDER BY fetched_at LIMIT 1",
-            (market_hash_name, source, window.value, at.isoformat()),
+            "SELECT * FROM sales_stats WHERE market_hash_name = ? AND source = ? AND app_id = ?"
+            " AND period = ? AND version IS NULL AND fetched_at >= ? ORDER BY fetched_at LIMIT 1",
+            (market_hash_name, source, app_id, window.value, at.isoformat()),
         ).fetchone()
         return None if row is None else self._sales(row)
 
@@ -404,24 +420,24 @@ class Storage:
         ]
 
     def last_paper(
-        self, market_hash_name: str, buy_market: str, sell_market: str
+        self, market_hash_name: str, buy_market: str, sell_market: str, app_id: int = CS2
     ) -> datetime | None:
         """Когда последний раз записана виртуальная сделка по этому маршруту."""
         row = self.conn.execute(
             "SELECT MAX(created_at) FROM paper_trades WHERE market_hash_name = ?"
-            " AND buy_market = ? AND sell_market = ? AND model = ?",
-            (market_hash_name, buy_market, sell_market, MODEL),
+            " AND buy_market = ? AND sell_market = ? AND app_id = ? AND model = ?",
+            (market_hash_name, buy_market, sell_market, app_id, MODEL),
         ).fetchone()
         return None if row[0] is None else _ptr(row[0])
 
     def last_notified(
-        self, market_hash_name: str, buy_market: str, sell_market: str
+        self, market_hash_name: str, buy_market: str, sell_market: str, app_id: int = CS2
     ) -> datetime | None:
         """Когда последний раз отправлялось уведомление по этому маршруту."""
         row = self.conn.execute(
             "SELECT MAX(sent_at) FROM notifications WHERE market_hash_name = ?"
-            " AND buy_market = ? AND sell_market = ?",
-            (market_hash_name, buy_market, sell_market),
+            " AND buy_market = ? AND sell_market = ? AND app_id = ?",
+            (market_hash_name, buy_market, sell_market, app_id),
         ).fetchone()
         return None if row[0] is None else _ptr(row[0])
 
@@ -433,12 +449,13 @@ class Storage:
         sell_market: str,
         profit_eur: Decimal,
         roi: Decimal,
+        app_id: int = CS2,
     ) -> None:
         """Отмечает, что уведомление по маршруту отправлено."""
         with self._tx() as c:
             c.execute(
                 "INSERT INTO notifications (sent_at, market_hash_name, buy_market, sell_market,"
-                " profit_eur, roi) VALUES (?,?,?,?,?,?)",
+                " profit_eur, roi, app_id) VALUES (?,?,?,?,?,?,?)",
                 (
                     sent_at.isoformat(),
                     market_hash_name,
@@ -446,6 +463,7 @@ class Storage:
                     sell_market,
                     str(profit_eur),
                     str(roi),
+                    app_id,
                 ),
             )
 

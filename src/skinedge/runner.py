@@ -22,6 +22,7 @@ from decimal import Decimal
 from html import escape
 
 from skinedge.fx import FxRates
+from skinedge.games import title
 from skinedge.money import Currency
 from skinedge.notify.message import format_paper_report
 from skinedge.notify.telegram import TelegramError
@@ -180,10 +181,11 @@ class Runner:
         for opp in result.found[:3]:
             r = opp.result
             log.info(
-                "  %s → %s  %s: прибыль %s, ROI %.1f%%",
+                "  %s → %s  %s (%s): прибыль %s, ROI %.1f%%",
                 r.buy_market,
                 r.sell_market,
                 opp.name,
+                title(opp.buy_quote.app_id),
                 r.profit,
                 r.roi * 100,
             )

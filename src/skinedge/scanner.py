@@ -327,4 +327,4 @@ class Scanner:
         if quote.url:
             return quote.url
         template = self.schedule.market(market).item_url
-        return template.format(name=urlquote(name)) if template else None
+        return template.format(name=urlquote(name), app_id=quote.app_id) if template else None

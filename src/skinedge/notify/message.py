@@ -5,6 +5,7 @@ from __future__ import annotations
 from decimal import Decimal
 from html import escape
 
+from skinedge.games import title
 from skinedge.paper import Report
 from skinedge.scanner import Opportunity
 
@@ -18,7 +19,7 @@ def format_opportunity(opp: Opportunity) -> str:
     r = opp.result
     status = "полный расчёт" if r.complete else "⚠️ неполный расчёт"
     lines = [
-        f"<b>{escape(opp.name)}</b>",
+        f"<b>{escape(opp.name)}</b> · {title(opp.buy_quote.app_id)}",
         f"{r.buy_market} → {r.sell_market} · {status}",
         f"Купить: {r.buy_price} · продать ~{r.sell_price}",
         f"<i>{escape(opp.sell.basis)}</i>",
