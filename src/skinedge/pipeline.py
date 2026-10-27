@@ -7,6 +7,9 @@
 предметы, которые сканер реально сравнивает («вселенная»): самые ликвидные
 предметы Skinport в заданном ценовом диапазоне и предметы открытых виртуальных
 сделок, для которых нужны контрольные точки.
+
+CSFloat отдаёт 200 запросов в час, по одному на предмет, поэтому за проход
+проверяется только часть вселенной (``ScanOptions.csfloat``), по кругу.
 """
 
 from __future__ import annotations
@@ -25,11 +28,20 @@ from skinedge.paper import record as paper_record
 from skinedge.quotes import Quote, SalesStats, SalesWindow
 from skinedge.scanner import Opportunity, ScanConfig, Scanner, stats_from_sales
 from skinedge.sources.base import SourceError
+from skinedge.sources.csfloat import CSFloatSource
 from skinedge.sources.dmarket import DMarketSource
 from skinedge.sources.skinport import SkinportSource
 from skinedge.storage import Storage
 
-MARKETS = ("skinport", "dmarket")
+MARKETS = ("skinport", "dmarket", "csfloat")
+# Маршруты «купить → продать». На CSFloat только покупаем: истории продаж в API нет.
+ROUTES = (
+    ("skinport", "dmarket"),
+    ("dmarket", "skinport"),
+    ("csfloat", "skinport"),
+    ("csfloat", "dmarket"),
+)
+CSFLOAT_OFFSET = "csfloat.offset"
 NOTIFY_COOLDOWN = timedelta(hours=24)
 NOTIFY_MAX = 5
 PAPER_HORIZON = timedelta(days=8)  # сделки, для которых ещё нужны контрольные точки
@@ -52,6 +64,7 @@ class ScanOptions:
         fetch: Загружать свежие цены (иначе работать по сохранённым).
         paper: Записывать виртуальные сделки.
         notify: Отправлять уведомления.
+        csfloat: Сколько предметов проверить на CSFloat за проход (0 — не проверять).
     """
 
     app_id: int = 730
@@ -63,6 +76,7 @@ class ScanOptions:
     fetch: bool = True
     paper: bool = True
     notify: bool = True
+    csfloat: int = 40
 
 
 @dataclass
@@ -117,6 +131,7 @@ class Pipeline:
         fx: Курсы валют.
         skinport: Источник Skinport (нужен при ``fetch``).
         dmarket: Источник DMarket (нужен при ``fetch``).
+        csfloat: Источник CSFloat; ``None`` — CSFloat не проверяется.
         telegram: Клиент Telegram и чат; ``None`` — уведомления не настроены.
         out: Куда писать ход работы (консоль или лог).
         clock: Текущее время (для тестов).
@@ -129,6 +144,7 @@ class Pipeline:
         fx: FxRates,
         skinport: SkinportSource | None = None,
         dmarket: DMarketSource | None = None,
+        csfloat: CSFloatSource | None = None,
         telegram: tuple[TelegramClient, str] | None = None,
         out: Callable[[str], None] = print,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
@@ -138,6 +154,7 @@ class Pipeline:
         self.fx = fx
         self.skinport = skinport
         self.dmarket = dmarket
+        self.csfloat = csfloat
         self.telegram = telegram
         self.out = out
         self.clock = clock
@@ -172,9 +189,13 @@ class Pipeline:
         if opts.fetch:
             # Продажу на DMarket подтверждаем реальными сделками: минимальный лот
             # без сделок может стоять месяцами и не говорит о спросе.
-            check = scanner.candidates(
-                "skinport", "dmarket", quotes["skinport"], quotes["dmarket"], now, opts.verify
-            )
+            check = [
+                name
+                for buy in ("skinport", "csfloat")
+                for name in scanner.candidates(
+                    buy, "dmarket", quotes[buy], quotes["dmarket"], now, opts.verify
+                )
+            ]
             open_trades = sorted(
                 {
                     t.market_hash_name
@@ -188,7 +209,7 @@ class Pipeline:
         sales = {m: self.storage.recent_sales(m, SalesWindow.D7, stats_since) for m in MARKETS}
         changes = trends(self.storage, stats_since)
         result = ScanResult(at=now)
-        for buy, sell in (("skinport", "dmarket"), ("dmarket", "skinport")):
+        for buy, sell in ROUTES:
             result.found += scanner.scan(
                 buy, sell, quotes[buy], quotes[sell], sales[sell], now, changes
             )
@@ -236,7 +257,44 @@ class Pipeline:
             schedule = schedule.with_rules([fee], replace_marketplace="dmarket")
         except SourceError as exc:
             self.out(f"Комиссия продавца DMarket не получена ({exc}), беру из правил")
+        self._fetch_csfloat(names, sp_sales, opts)
         return schedule
+
+    def _fetch_csfloat(self, names: list[str], sales: list[SalesStats], opts: ScanOptions) -> None:
+        """Проверяет на CSFloat очередную порцию предметов, у которых есть спрос.
+
+        Сбой CSFloat не останавливает проход: остальные площадки важнее.
+        """
+        if self.csfloat is None or opts.csfloat <= 0:
+            return
+        sold = {
+            s.market_hash_name
+            for s in sales
+            if s.window is SalesWindow.D7
+            and s.version is None
+            and s.volume >= opts.config.min_sales_7d
+        }
+        pool = [n for n in names if n in sold]
+        if not pool:
+            return
+        start = int(self.storage.get_meta(CSFLOAT_OFFSET) or 0) % len(pool)
+        batch = (pool[start:] + pool[:start])[: opts.csfloat]
+        try:
+            quotes = self.csfloat.fetch_lowest(batch, opts.app_id)
+        except SourceError as exc:
+            self.out(f"CSFloat пропущен: {exc}")
+            return
+        self.storage.save_quotes(quotes)
+        self.storage.set_meta(CSFLOAT_OFFSET, str(start + len(quotes)))
+        left = (
+            ""
+            if self.csfloat.remaining is None
+            else f", лимит API: осталось {self.csfloat.remaining}"
+        )
+        self.out(
+            f"CSFloat: проверено {len(quotes)} из {len(pool)} предметов со спросом, "
+            f"с лотами {sum(q.min_price is not None for q in quotes)}{left}"
+        )
 
     def _verify_dmarket(self, names: list[str], app_id: int, now: datetime) -> None:
         if not names or self.dmarket is None:

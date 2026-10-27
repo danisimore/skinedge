@@ -23,7 +23,7 @@ marketplaces:
     payout: cash
     transfer_lock_days: 7
     settlement_days: 7
-    item_url: "https://csfloat.com/search?market_hash_name={name}"
+    item_url: "https://csfloat.com/search?market_hash_name={name}&sort_by=lowest_price&type=buy_now"
   dmarket:
     currency: USD
     payout: cash

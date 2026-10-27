@@ -26,6 +26,7 @@ from skinedge.runner import MIN_EVERY, AlreadyRunning, Runner, RunOptions
 from skinedge.scanner import Opportunity, ScanConfig
 from skinedge.sources import ecb
 from skinedge.sources.base import SourceError
+from skinedge.sources.csfloat import CSFloatSource
 from skinedge.sources.dmarket import DMarketSigner, DMarketSource
 from skinedge.sources.skinport import SkinportSource
 from skinedge.storage import Storage
@@ -452,6 +453,7 @@ def _scan_options(
     fetch: bool,
     paper: bool,
     notify: bool,
+    csfloat: int,
 ) -> ScanOptions:
     return ScanOptions(
         app_id=app_id,
@@ -467,6 +469,7 @@ def _scan_options(
         fetch=fetch,
         paper=paper,
         notify=notify,
+        csfloat=csfloat,
     )
 
 
@@ -485,6 +488,21 @@ Notify = Annotated[
     bool, typer.Option("--notify/--no-notify", help="Отправлять новые возможности в Telegram")
 ]
 Verbose = Annotated[bool, typer.Option("--verbose", "-v")]
+CSFloatItems = Annotated[
+    int,
+    typer.Option(
+        "--csfloat",
+        help="Сколько предметов проверить на CSFloat за проход (0 — не проверять). "
+        "Лимит CSFloat API: 200 запросов в час",
+    ),
+]
+
+
+def _csfloat_source(settings: Settings) -> CSFloatSource | None:
+    if settings.csfloat_api_key is None:
+        typer.echo("Нет ключа CSFloat (SKINEDGE_CSFLOAT_KEY в .env): CSFloat не проверяется")
+        return None
+    return CSFloatSource(settings.csfloat_api_key.get_secret_value())
 
 
 @app.command()
@@ -504,9 +522,10 @@ def scan(
     top: Annotated[int, typer.Option(help="Сколько возможностей показать")] = 15,
     paper: Paper = True,
     notify: Notify = True,
+    csfloat: CSFloatItems = 40,
     verbose: Verbose = False,
 ) -> None:
-    """Ищет выгодные маршруты Skinport ↔ DMarket. Только анализ, без сделок."""
+    """Ищет выгодные маршруты Skinport ↔ DMarket и CSFloat → обе. Только анализ, без сделок."""
     logging.basicConfig(level=logging.DEBUG if verbose else logging.WARNING)
     _quiet_http()
     settings = Settings()
@@ -525,6 +544,7 @@ def scan(
         fetch_first,
         paper,
         notify,
+        csfloat,
     )
     storage = Storage(settings.db_path)
     try:
@@ -534,6 +554,7 @@ def scan(
             fx,
             skinport=SkinportSource() if fetch_first else None,
             dmarket=_dmarket_source(settings) if fetch_first else None,
+            csfloat=_csfloat_source(settings) if fetch_first and csfloat > 0 else None,
             telegram=_telegram_target(settings) if notify else None,
             out=typer.echo,
         )
@@ -617,6 +638,7 @@ def run_command(
     force: Annotated[
         bool, typer.Option(help="Запустить, даже если другой запуск недавно оставил отметку")
     ] = False,
+    csfloat: CSFloatItems = 40,
     verbose: Verbose = False,
 ) -> None:
     """Сканирует по расписанию, пока не остановят (Ctrl+C). Только анализ, без сделок."""
@@ -640,6 +662,7 @@ def run_command(
         True,
         paper,
         notify and telegram is not None,
+        csfloat,
     )
     manual = _manual_fx(settings, usd_per_eur) if usd_per_eur is not None else None
 
@@ -653,6 +676,7 @@ def run_command(
         FxRates(rates={}, spread=settings.fx_spread),
         skinport=SkinportSource(),
         dmarket=_dmarket_source(settings),
+        csfloat=_csfloat_source(settings) if csfloat > 0 else None,
         telegram=telegram,
         out=logger.info,
     )
