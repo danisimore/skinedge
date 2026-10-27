@@ -7,6 +7,13 @@
 ``/v1/items`` отдаёт сводку по названию предмета: минимальную, максимальную,
 среднюю и медианную цену предложений и количество лотов. Конкретных лотов,
 float и фаз в ответе нет, поэтому котировки Skinport имеют тип ``AGGREGATE``.
+
+Кроме документированного лимита у Skinport есть скрытый: 27.10.2026 при 24
+запросах в час (по два на каждую из трёх игр раз в 15 минут) он ответил 429
+«Your connection is being rate limited» и не пускал ровно час, хотя 8 запросов
+за 5 минут не превышались ни разу; с одной CS2 (8 запросов в час) блокировок не
+было. Поэтому статистика продаж (сводка за 24 часа – 90 дней) перечитывается раз
+в час, а после 429 адаптер не повторяет запрос до срока из ``Retry-After``.
 """
 
 from __future__ import annotations
@@ -15,7 +22,7 @@ import json
 import logging
 import time
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -23,12 +30,14 @@ import httpx
 
 from skinedge.money import Currency
 from skinedge.quotes import Quote, QuoteKind, SalesStats, SalesWindow
-from skinedge.sources.base import RateLimiter, SourceError, request_with_retries
+from skinedge.sources.base import RateLimited, RateLimiter, SourceError, request_with_retries
 
 log = logging.getLogger(__name__)
 
 BASE_URL = "https://api.skinport.com/v1"
-CACHE_SECONDS = 300.0
+CACHE_SECONDS = {"/items": 300.0, "/sales/history": 3600.0}
+MAX_WAIT = 60.0  # дольше внутри прохода не ждём: см. описание модуля
+BLOCK_SECONDS = 300.0  # пауза после 429, если Skinport не прислал Retry-After
 _WINDOWS = {
     "last_24_hours": SalesWindow.H24,
     "last_7_days": SalesWindow.D7,
@@ -81,30 +90,49 @@ class SkinportSource:
             path: RateLimiter(8, 300.0, clock=clock, sleep=sleep)
             for path in ("/items", "/sales/history")
         }
-        self._cache: dict[tuple[str, tuple[tuple[str, str], ...]], tuple[float, Any]] = {}
+        # Ключ запроса → (монотонное время, время загрузки UTC, ответ).
+        self._cache: dict[tuple[str, tuple[tuple[str, str], ...]], tuple[float, datetime, Any]] = {}
+        self._blocked_until = 0.0  # монотонное время, до которого Skinport просил не приходить
 
-    def _get(self, path: str, params: dict[str, str]) -> Any:
+    def _get(self, path: str, params: dict[str, str]) -> tuple[datetime, Any]:
+        """Ответ endpoint'а и момент, когда он на самом деле загружен."""
         key = (path, tuple(sorted(params.items())))
         cached = self._cache.get(key)
-        if cached and self._clock() - cached[0] < CACHE_SECONDS:
-            return cached[1]
-        response = request_with_retries(
-            self.client,
-            "GET",
-            f"{BASE_URL}{path}",
-            limiter=self._limiters[path],
-            sleep=self._sleep,
-            params=params,
-            headers={"Accept-Encoding": "br", "User-Agent": "SkinEdge/0.1 (+price monitor)"},
-        )
+        if cached and self._clock() - cached[0] < CACHE_SECONDS[path]:
+            return cached[1], cached[2]
+        left = self._blocked_until - self._clock()
+        if left > 0:
+            raise SourceError(
+                f"Skinport {path}: запросы на паузе после HTTP 429, ещё {left / 60:.0f} мин"
+            )
+        try:
+            response = request_with_retries(
+                self.client,
+                "GET",
+                f"{BASE_URL}{path}",
+                limiter=self._limiters[path],
+                max_wait=MAX_WAIT,
+                sleep=self._sleep,
+                params=params,
+                headers={"Accept-Encoding": "br", "User-Agent": "SkinEdge/0.1 (+price monitor)"},
+            )
+        except RateLimited as exc:
+            wait = exc.retry_after if exc.retry_after is not None else BLOCK_SECONDS
+            self._blocked_until = self._clock() + wait
+            until = datetime.now().astimezone() + timedelta(seconds=wait)
+            raise SourceError(
+                f"Skinport {path}: HTTP 429 «rate limited», запросы на паузе до "
+                f"{until:%H:%M} ({wait / 60:.0f} мин)"
+            ) from exc
+        fetched_at = datetime.now(UTC)
         try:
             data = json.loads(response.text, parse_float=Decimal)
         except json.JSONDecodeError as exc:
             raise SourceError(f"Skinport {path}: ответ не JSON") from exc
         if not isinstance(data, list):
             raise SourceError(f"Skinport {path}: ожидался список, получено {type(data).__name__}")
-        self._cache[key] = (self._clock(), data)
-        return data
+        self._cache[key] = (self._clock(), fetched_at, data)
+        return fetched_at, data
 
     def fetch_quotes(self, app_id: int = 730) -> list[Quote]:
         """Сводные котировки по всем предметам игры, только лоты, доступные к обмену.
@@ -116,8 +144,7 @@ class SkinportSource:
             Котировки. Предметы без лотов возвращаются с ``min_price=None``.
         """
         params = {"app_id": str(app_id), "currency": self.currency.value, "tradable": "1"}
-        rows = self._get("/items", params)
-        fetched_at = datetime.now(UTC)
+        fetched_at, rows = self._get("/items", params)
         quotes: list[Quote] = []
         skipped = 0
         for row in rows:
@@ -158,13 +185,13 @@ class SkinportSource:
             names: Названия предметов; ``None`` значит все предметы.
 
         Returns:
-            По одной записи на предмет, вариант и окно.
+            По одной записи на предмет, вариант и окно. Ответ кешируется на час,
+            ``fetched_at`` — момент настоящей загрузки.
         """
         params = {"app_id": str(app_id), "currency": self.currency.value}
         if names:
             params["market_hash_name"] = ",".join(names)
-        rows = self._get("/sales/history", params)
-        fetched_at = datetime.now(UTC)
+        fetched_at, rows = self._get("/sales/history", params)
         stats: list[SalesStats] = []
         skipped = 0
         for row in rows:

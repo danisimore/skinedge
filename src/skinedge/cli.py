@@ -726,6 +726,13 @@ def run_command(
         every,
         settings.log_path,
     )
+    if len(opts.games) >= 3:
+        logger.info(
+            "%s сканируется каждый проход, %s — по очереди, по одной за проход "
+            "(Skinport блокирует соединение, если запросов в час слишком много)",
+            game_title(opts.games[0]),
+            " и ".join(game_title(g) for g in opts.games[1:]),
+        )
     try:
         done = runner.run()
         logger.info("Выполнено проходов: %d", done)

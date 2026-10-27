@@ -180,6 +180,9 @@ class Pipeline:
         self.out = out
         self.clock = clock
         self._prefix = ""  # название игры в сообщениях, когда игр несколько
+        # Статистика Skinport кешируется на час: по каждой игре помним, какие
+        # предметы из последней загрузки уже записаны, чтобы не дублировать строки.
+        self._sales_saved: dict[int, tuple[datetime, set[str]]] = {}
 
     def run(self, opts: ScanOptions) -> ScanResult:
         """Полный проход: скан, журнал виртуальных сделок, уведомление.
@@ -281,7 +284,7 @@ class Pipeline:
         universe = set(names) | self._universe_extra(now, app_id)
         self.storage.save_quotes(q for q in sp_quotes if q.market_hash_name in universe)
         sp_sales = self.skinport.fetch_sales(app_id)
-        self.storage.save_sales(s for s in sp_sales if _keep_sales(s, universe))
+        self._save_skinport_sales(app_id, sp_sales, universe)
         self._say(
             f"Skinport: {len(sp_quotes)} предметов, сравниваю {len(names)} самых ликвидных "
             f"от {opts.min_price} до {opts.max_price} EUR"
@@ -315,6 +318,19 @@ class Pipeline:
         if app_id == CS2:  # CSFloat торгует только CS2
             self._fetch_csfloat(names, sp_sales, opts)
         return schedule
+
+    def _save_skinport_sales(
+        self, app_id: int, sales: list[SalesStats], universe: set[str]
+    ) -> None:
+        if not sales:
+            return
+        stamp = sales[0].fetched_at
+        saved_at, saved = self._sales_saved.get(app_id, (None, set()))
+        if saved_at != stamp:
+            saved = set()
+        new = universe - saved
+        self.storage.save_sales(s for s in sales if _keep_sales(s, new))
+        self._sales_saved[app_id] = (stamp, saved | new)
 
     def _fetch_csfloat(self, names: list[str], sales: list[SalesStats], opts: ScanOptions) -> None:
         """Проверяет на CSFloat очередную порцию предметов CS2, у которых есть спрос.

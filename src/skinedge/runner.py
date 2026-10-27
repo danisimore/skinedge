@@ -8,6 +8,9 @@
 
 Второй экземпляр с той же базой не запускается: работающий процесс раз в
 минуту оставляет в базе отметку, и новый запуск не стартует, пока она свежая.
+
+Когда игр три и больше, первая из списка сканируется каждый проход, а остальные
+по очереди, по одной за проход (см. :func:`games_for_pass`).
 """
 
 from __future__ import annotations
@@ -16,7 +19,7 @@ import logging
 import os
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta, tzinfo
 from decimal import Decimal
 from html import escape
@@ -45,6 +48,20 @@ HEARTBEAT = "runner.heartbeat"
 PID = "runner.pid"
 REPORT_DATE = "runner.report_date"
 PRUNED_AT = "runner.pruned_at"
+
+
+def games_for_pass(games: tuple[int, ...], n: int) -> tuple[int, ...]:
+    """Игры прохода ``n`` (с единицы).
+
+    Skinport отдаёт цены одним запросом на игру и блокирует соединение на час, если
+    запросов в час слишком много (см. :mod:`skinedge.sources.skinport`). Поэтому при
+    трёх играх и больше первая игра (по умолчанию CS2) идёт каждый проход, а
+    остальные по очереди: с CS2, Dota 2 и Rust это 2 игры за проход вместо 3.
+    """
+    if len(games) < 3:
+        return games
+    rest = games[1:]
+    return (games[0], rest[(n - 1) % len(rest)])
 
 
 class AlreadyRunning(RuntimeError):
@@ -152,7 +169,8 @@ class Runner:
         result: ScanResult | None = None
         try:
             self.pipeline.fx = self._rates(started)
-            result = self.pipeline.run(self.scan)
+            opts = replace(self.scan, games=games_for_pass(self.scan.games, n))
+            result = self.pipeline.run(opts)
         except Exception as exc:  # любой сбой прохода не должен останавливать работу
             self._failed(n, exc)
         else:

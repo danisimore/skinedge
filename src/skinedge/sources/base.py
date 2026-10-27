@@ -22,6 +22,18 @@ class SourceError(RuntimeError):
     """Источник не вернул пригодные данные."""
 
 
+class RateLimited(SourceError):
+    """Площадка ограничила запросы (HTTP 429).
+
+    Attributes:
+        retry_after: Через сколько секунд площадка разрешает повтор, если она это сообщила.
+    """
+
+    def __init__(self, message: str, retry_after: float | None) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
 class MarketSource(Protocol):
     """Источник котировок одной площадки."""
 
@@ -113,25 +125,41 @@ def request_with_retries(
         Успешный ответ (2xx).
 
     Raises:
+        RateLimited: Если площадка ответила 429 и просит ждать дольше ``max_wait``
+            или попытки исчерпаны на 429. Ждать час внутри прохода бессмысленно:
+            повтор раньше срока площадка всё равно отклонит.
         SourceError: Если попытки исчерпаны или ответ не подлежит повтору.
     """
     last_error = ""
+    limited: float | None = None
+    last_status = 0
     for attempt in range(1, attempts + 1):
         limiter.acquire()
         try:
             response = client.request(method, url, **kwargs)  # type: ignore[arg-type]
         except httpx.TransportError as exc:
             last_error = f"сетевая ошибка: {exc!r}"
+            last_status = 0
             wait = backoff * 2 ** (attempt - 1)
         else:
             if response.is_success:
                 return response
-            last_error = f"HTTP {response.status_code}: {response.text[:200]}"
+            last_status = response.status_code
+            # Тело ответа в одну строку, чтобы JSON с ошибкой не растягивал лог.
+            last_error = f"HTTP {response.status_code}: {' '.join(response.text[:200].split())}"
             if response.status_code not in RETRY_STATUSES:
                 raise SourceError(f"{method} {url}: {last_error}")
-            wait = _retry_after(response) or backoff * 2 ** (attempt - 1)
+            limited = _retry_after(response)
+            if response.status_code == 429 and limited is not None and limited > max_wait:
+                raise RateLimited(
+                    f"{method} {url}: {last_error}; повтор разрешён через {limited:.0f} с", limited
+                )
+            wait = limited or backoff * 2 ** (attempt - 1)
         if attempt < attempts:
             wait = min(wait, max_wait)
             log.warning("%s %s: %s; повтор через %.0f с", method, url, last_error, wait)
             sleep(wait)
-    raise SourceError(f"{method} {url}: попытки исчерпаны, последняя ошибка {last_error}")
+    message = f"{method} {url}: попытки исчерпаны, последняя ошибка {last_error}"
+    if last_status == 429:
+        raise RateLimited(message, limited)
+    raise SourceError(message)
