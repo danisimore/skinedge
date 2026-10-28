@@ -210,3 +210,35 @@ def test_unknown_game() -> None:
     src, _ = make_source(lambda r: httpx.Response(200, json={}))
     with pytest.raises(SourceError, match="не поддерживается"):
         src.fetch_best_prices(["x"], app_id=1)
+
+
+# Форма ответа GET /marketplace-api/v2/offers сверена с живым запуском 28.10.2026:
+# название и картинка лежат в attributes, верхний title пустой.
+IMAGE = "https://steamcommunity-a.akamaihd.net/economy/image/abc"
+
+
+def offer(title: str, image: str = IMAGE) -> dict[str, Any]:
+    return {
+        "offerId": "o1",
+        "priceCents": "3600",
+        "attributes": {"title": title, "imageUri": image, "gameId": "a8db"},
+    }
+
+
+def test_image_by_exact_title() -> None:
+    name = "Fracture Case"
+    data = {"items": [offer("Fracture Case Key", IMAGE + "key"), offer(name)], "cursor": ""}
+    src, seen = make_source(lambda r: httpx.Response(200, json=data))
+    assert src.fetch_image(name) == IMAGE
+    req = seen[0]
+    assert req.url.path == "/marketplace-api/v2/offers"
+    assert req.url.params["title"] == name and req.url.params["withImages"] == "true"
+    assert req.url.params["gameId"] == "a8db"
+    verify(req)
+
+    only_prefix = {"items": [offer("Fracture Case Key")]}
+    src, _ = make_source(lambda r: httpx.Response(200, json=only_prefix))
+    assert src.fetch_image(name) is None
+    src, _ = make_source(lambda r: httpx.Response(200, json={"code": "x"}))
+    with pytest.raises(SourceError):
+        src.fetch_image(name)

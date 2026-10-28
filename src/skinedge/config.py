@@ -46,3 +46,7 @@ class Settings(BaseSettings):
     telegram_chat_id: str | None = Field(
         None, validation_alias=AliasChoices("SKINEDGE_TELEGRAM_CHAT_ID", "TG_CHAT_ID")
     )
+
+
+class SetupError(RuntimeError):
+    """Для запуска не хватает настроек (ключей в ``.env``) или они неверны."""

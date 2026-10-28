@@ -8,8 +8,8 @@
 * ``X-Request-Sign`` — ``"dmar ed25519 " + hex(подпись)`` строки
   ``METHOD + путь_с_query + тело + X-Sign-Date``.
 
-SkinEdge вызывает только методы чтения: лучшие цены и заявки, историю продаж
-и комиссии. Методов покупки и продажи в адаптере нет.
+SkinEdge вызывает только методы чтения: лучшие цены и заявки, историю продаж,
+комиссии и картинки предметов. Методов покупки и продажи в адаптере нет.
 
 Единицы сумм проверены живым запуском 26.10.2026 (в документации их нет):
 
@@ -17,6 +17,12 @@ SkinEdge вызывает только методы чтения: лучшие �
 * ``last-sales``: ``price`` — доллары строкой ("24.68");
 * ``customized-fees``: ``fraction`` — доля ("0.1" = 10%); ``minAmount`` = 1 считаем
   одним центом по аналогии с ``Amount``, это не подтверждено.
+
+Список предложений ``GET /marketplace-api/v2/offers`` (прежний
+``/exchange/v1/market/items`` отвечает 410 Gone) проверен 28.10.2026:
+``items[].attributes.title`` — название, ``attributes.imageUri`` — картинка на
+``steamcommunity-a.akamaihd.net``, только с ``withImages=true``; ``title`` в
+запросе ищет по началу названия.
 
 Численные лимиты запросов не опубликованы, поэтому берём 1 запрос в секунду.
 """
@@ -49,6 +55,7 @@ CATALOG = {730: "csgo-skins", 570: "dota2-skins", 252490: "rust-skins"}
 DOCS_URL = "https://docs.dmarket.com/v1/swagger.html"
 SIGN_PREFIX = "dmar ed25519 "
 TITLES_PER_REQUEST = 100
+IMAGE_OFFERS = 20  # предложений на поиск картинки: среди них ищется точное название
 
 
 class DMarketSigner:
@@ -247,6 +254,31 @@ class DMarketSource:
             except (KeyError, TypeError, ValueError) as exc:
                 log.warning("DMarket: пропущена строка %r: %s", row, exc)
         return out
+
+    def fetch_image(self, title: str, app_id: int = 730) -> str | None:
+        """Ссылка на картинку предмета из списка предложений.
+
+        Returns:
+            Адрес картинки или ``None``, если лотов с таким названием нет.
+        """
+        params = {
+            "gameId": self._game(app_id),
+            "limit": str(IMAGE_OFFERS),
+            "title": title,
+            "withImages": "true",
+        }
+        data = self._request("GET", "/marketplace-api/v2/offers", params=params)
+        rows = data.get("items") if isinstance(data, dict) else None
+        if not isinstance(rows, list):
+            raise SourceError("DMarket offers: нет списка items")
+        for row in rows:
+            attrs = row.get("attributes") if isinstance(row, dict) else None
+            if not isinstance(attrs, dict) or attrs.get("title") != title:
+                continue  # поиск по началу названия: "X" находит и "X Key"
+            uri = attrs.get("imageUri")
+            if isinstance(uri, str) and uri:
+                return uri
+        return None
 
     def fetch_last_sales(self, title: str, app_id: int = 730, limit: int = 20) -> list[Sale]:
         """Последние продажи предмета (до 20 за запрос, за 12 месяцев).

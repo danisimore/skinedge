@@ -8,8 +8,9 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Rubik:wght@500;600&display=swap">
 <style>
-/* Раскладка: «торговый журнал» — шапка со статусом сканера, вкладки, сводка из четырёх
-   плиток, форма покупки и таблица сделок. Акцент — синий Mil-Spec из шкалы редкости CS2. */
+/* Раскладка: шапка со статусом сканера и вкладки. «Сканер» — панель запуска и карточки
+   найденных сделок; «Журнал» — сводка из четырёх плиток, форма покупки и таблица сделок.
+   Акцент — синий Mil-Spec из шкалы редкости CS2. */
 :root {
   --bg: #f2f4f9;
   --surface: #ffffff;
@@ -33,6 +34,8 @@
   --font-body: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
   --font-data: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
   --radius: 10px;
+  --art-bg: #e9edf7;
+  --art-glow: rgba(53, 80, 224, 0.2);
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
@@ -41,6 +44,7 @@
     --muted: #7f87a6; --line: #262d45; --line-strong: #353d5a; --accent: #8096ff; --accent-ink: #0d111d;
     --accent-soft: #1f2753; --good: #4fd08a; --good-soft: #12301f; --bad: #ff8a80; --bad-soft: #3a1717;
     --warn: #f0b74e; --warn-soft: #33270f; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.25);
+    --art-bg: #0f1425; --art-glow: rgba(128, 150, 255, 0.26);
     color-scheme: dark;
   }
 }
@@ -49,6 +53,7 @@
   --muted: #7f87a6; --line: #262d45; --line-strong: #353d5a; --accent: #8096ff; --accent-ink: #0d111d;
   --accent-soft: #1f2753; --good: #4fd08a; --good-soft: #12301f; --bad: #ff8a80; --bad-soft: #3a1717;
   --warn: #f0b74e; --warn-soft: #33270f; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.25);
+  --art-bg: #0f1425; --art-glow: rgba(128, 150, 255, 0.26);
   color-scheme: dark;
 }
 
@@ -95,7 +100,9 @@ body::before {
 .pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; font-size: 0.8rem; font-weight: 500; white-space: nowrap; }
 .pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 .pill.ok { color: var(--good); background: var(--good-soft); }
-.pill.off { color: var(--bad); background: var(--bad-soft); }
+.pill.off { color: var(--ink-2); background: var(--surface-2); border: 1px solid var(--line); }
+.pill.warn { color: var(--warn); background: var(--warn-soft); }
+a.pill { text-decoration: none; }
 .tabs { display: flex; gap: 4px; width: 100%; margin-bottom: -13px; }
 .tabs a {
   padding: 8px 14px; text-decoration: none; color: var(--ink-2); font-weight: 500;
@@ -154,6 +161,10 @@ button.btn.primary { background: var(--accent); border-color: var(--accent); col
 button.btn.primary:hover { filter: brightness(1.08); }
 button.btn.danger { color: var(--bad); }
 button.btn.small { padding: 5px 10px; font-size: 0.85rem; }
+button.btn.ghost { background: transparent; border-color: transparent; color: var(--ink-2); font-weight: 500; }
+button.btn.ghost:hover { border-color: var(--line-strong); color: var(--ink); }
+button.btn.ghost.armed { color: var(--bad); border-color: var(--bad); }
+.btn svg { width: 15px; height: 15px; vertical-align: -2px; margin-right: 6px; }
 button:disabled { opacity: 0.6; cursor: progress; }
 
 /* ---------- таблица сделок ---------- */
@@ -194,6 +205,57 @@ ul.warnings { margin: 8px 0 0; padding-left: 18px; font-size: 0.82rem; color: va
 .state-line { font-size: 0.88rem; color: var(--ink-2); }
 .state-line strong { color: var(--ink); }
 
+/* ---------- сканер ---------- */
+.runbar { position: relative; overflow: hidden; display: grid; gap: 10px; padding: 18px 20px; }
+.runbar .row1 { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; }
+.runbar .state { display: flex; align-items: center; gap: 10px; font-family: var(--font-display); font-weight: 600; font-size: 1.15rem; }
+.runbar .row1 .btn { margin-left: auto; }
+.runbar .last { font-size: 0.88rem; color: var(--ink-2); }
+.runbar .note { margin: 0; }
+.runbar .note.bad { color: var(--bad); background: var(--bad-soft); }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: none; }
+.dot.on { background: var(--good); box-shadow: 0 0 0 4px var(--good-soft); }
+.dot.busy { background: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+.dot.warn { background: var(--warn); box-shadow: 0 0 0 4px var(--warn-soft); }
+.sweep { position: absolute; inset: 0 0 auto; height: 3px; background: linear-gradient(90deg, transparent, var(--accent), transparent) no-repeat; background-size: 40% 100%; }
+.section-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; }
+.section-head .tools { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.section-head select { width: auto; padding: 4px 8px; font-size: 0.85rem; }
+
+/* ---------- карточки сделок ---------- */
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 292px), 1fr)); gap: 16px; }
+.deal { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; box-shadow: var(--shadow); min-width: 0; }
+.deal .art { position: relative; height: 148px; display: grid; place-items: center; background: radial-gradient(110% 85% at 50% 100%, var(--art-glow), transparent 72%), var(--art-bg); border-bottom: 1px solid var(--line); }
+.deal .art img { max-width: 80%; max-height: 124px; object-fit: contain; filter: drop-shadow(0 8px 12px rgba(10, 14, 28, 0.28)); }
+.deal .art .ph { width: 52px; height: 52px; color: var(--muted); opacity: 0.55; }
+.deal .badges { position: absolute; top: 10px; left: 10px; right: 10px; display: flex; justify-content: space-between; align-items: start; gap: 6px; }
+.badge-new { font-size: 0.72rem; font-weight: 600; letter-spacing: 0.04em; color: var(--accent-ink); background: var(--accent); border-radius: 4px; padding: 1px 7px; }
+.deal .content { padding: 14px 16px 12px; display: grid; gap: 12px; align-content: start; flex: 1; }
+.deal-name { font-weight: 600; font-size: 1rem; line-height: 1.3; margin: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-height: 2.6em; overflow-wrap: anywhere; }
+.route { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 8px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.leg { display: grid; gap: 1px; min-width: 0; }
+.leg.sell { text-align: right; }
+.leg .k { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); font-weight: 500; }
+.leg .m { font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-decoration: none; }
+.leg a.m:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.leg a.m::after { content: " ↗"; font-weight: 400; color: var(--muted); }
+.leg .p { font-family: var(--font-data); font-size: 0.9rem; color: var(--ink-2); white-space: nowrap; }
+.route .arrow { width: 18px; height: 18px; color: var(--muted); }
+.gain { display: flex; align-items: baseline; justify-content: space-between; gap: 6px 10px; flex-wrap: wrap; }
+.gain .big { font-family: var(--font-display); font-size: 1.45rem; font-weight: 600; letter-spacing: -0.01em; line-height: 1.2; white-space: nowrap; }
+.gain .big small { font-size: 0.85rem; font-weight: 500; color: var(--muted); margin-left: 4px; }
+.gain .roi { font-family: var(--font-data); font-size: 0.85rem; font-weight: 500; border-radius: 6px; padding: 2px 8px; color: var(--good); background: var(--good-soft); white-space: nowrap; }
+.deal-meta { font-size: 0.8rem; color: var(--muted); display: grid; gap: 2px; }
+.deal-meta .flag { color: var(--warn); }
+.deal-actions { padding: 0 16px 16px; }
+.deal-actions .btn { width: 100%; }
+.empty .btn { margin-top: 8px; }
+
+/* ---------- выключено ---------- */
+.offline { background: var(--warn-soft); color: var(--warn); border-bottom: 1px solid var(--line); }
+.offline .wrap { padding-block: 10px; font-size: 0.9rem; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.offline strong { color: var(--ink); }
+
 /* ---------- диалог и уведомления ---------- */
 dialog { border: 0; border-radius: 14px; padding: 0; width: min(720px, calc(100vw - 32px)); background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
 dialog::backdrop { background: rgba(10, 14, 28, 0.45); }
@@ -214,23 +276,51 @@ dialog .body { padding: 16px 20px 20px; display: grid; gap: 20px; }
 @media (prefers-reduced-motion: no-preference) {
   .toast { animation: rise 0.18s ease-out; }
   @keyframes rise { from { transform: translate(-50%, 8px); opacity: 0; } }
+  .deal.enter { animation: deal-in 0.4s ease-out both; animation-delay: calc(var(--i, 0) * 45ms); }
+  @keyframes deal-in { from { opacity: 0; transform: translateY(10px) scale(0.98); } }
+  .dot.busy { animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 50% { box-shadow: 0 0 0 7px var(--accent-soft); } }
+  .sweep { animation: sweep 1.6s linear infinite; }
+  @keyframes sweep { from { background-position: -40% 0; } to { background-position: 140% 0; } }
 }
 </style>
 </head>
 <body>
+<div class="offline" id="offline" hidden role="alert"><div class="wrap"><strong>SkinEdge выключен.</strong><span>Сканер остановлен, данные сохранены. Чтобы открыть снова, запусти SkinEdge.cmd: страница обновится сама.</span></div></div>
 <header class="top">
   <div class="wrap">
     <div class="brand"><h1>Skin<span>Edge</span></h1><span class="tag">только анализ, сделки совершаешь ты</span></div>
     <div class="status" id="status"><span class="muted">Загружаю…</span></div>
+    <button type="button" class="btn ghost small" id="quit" hidden>Выключить</button>
     <nav class="tabs" aria-label="Разделы">
+      <a href="#deals" id="tab-deals">Сканер</a>
       <a href="#journal" id="tab-journal">Журнал сделок</a>
-      <a href="#scanner" id="tab-scanner">Настройки сканера</a>
+      <a href="#settings" id="tab-settings">Настройки сканера</a>
     </nav>
   </div>
 </header>
 
 <main>
-  <div class="wrap" id="view-journal">
+  <div class="wrap" id="view-deals">
+    <section class="panel runbar" id="runbar" aria-live="polite"><span class="muted">Загружаю…</span></section>
+    <section aria-labelledby="deals-title" style="display:grid;gap:14px">
+      <div class="section-head">
+        <h2 id="deals-title">Найденные сделки</h2>
+        <div class="tools">
+          <div class="filters" role="group" aria-label="Игра" id="deal-games"></div>
+          <label class="small muted">Сначала <select id="deal-sort" aria-label="Сортировка">
+            <option value="roi">выше ROI</option>
+            <option value="profit">больше прибыль</option>
+            <option value="new">новые</option>
+          </select></label>
+        </div>
+      </div>
+      <div class="cards" id="cards"></div>
+      <p class="muted small" style="margin:0">Цена продажи — оценка по лотам и реальным продажам за 7 дней, прибыль — после всех комиссий и вывода, в EUR. Это не гарантия: перед покупкой проверь лот, float и наклейки. SkinEdge ничего не покупает и не продаёт.</p>
+    </section>
+  </div>
+
+  <div class="wrap" id="view-journal" hidden>
     <section class="kpis" id="kpis" aria-label="Сводка"></section>
     <div id="kpi-note" hidden class="note"></div>
 
@@ -252,7 +342,7 @@ dialog .body { padding: 16px 20px 20px; display: grid; gap: 20px; }
     </section>
   </div>
 
-  <div class="wrap" id="view-scanner" hidden>
+  <div class="wrap" id="view-settings" hidden>
     <section class="panel" aria-labelledby="set-title">
       <header><h2 id="set-title">Что искать</h2><span class="state-line" id="set-state"></span></header>
       <form class="body settings" id="set-form" novalidate>
@@ -298,7 +388,10 @@ dialog .body { padding: 16px 20px 20px; display: grid; gap: 20px; }
 
 <script>
 "use strict";
-const S = { meta: null, trades: [], summary: null, filter: "all", openRow: null };
+const S = {
+  meta: null, trades: [], summary: null, filter: "all", openRow: null,
+  scan: null, game: "all", sort: "roi", visible: [], shown: new Set(), sig: "", rendered: false, offline: false,
+};
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const fmt2 = new Intl.NumberFormat("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -309,20 +402,28 @@ const tone = (v) => (Number(v) > 0 ? "pos" : Number(v) < 0 ? "neg" : "");
 const pct = (v) => (v == null ? "—" : `${signed(Number(v) * 100)}%`);
 const dmy = (iso) => { if (!iso) return "—"; const [y, m, d] = iso.slice(0, 10).split("-"); return `${d}.${m}.${y.slice(2)}`; };
 const hm = (iso) => new Date(iso).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+const when = (iso) => (new Date(iso).toDateString() === new Date().toDateString() ? hm(iso) : `${dmy(iso)} ${hm(iso)}`);
+const share = (v) => `${(Number(v) * 100).toLocaleString("ru-RU", { maximumFractionDigits: 1 })}%`;
+const duration = (sec) => (sec < 60 ? `${sec} с` : `${Math.floor(sec / 60)} мин${sec % 60 ? ` ${sec % 60} с` : ""}`);
 const today = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
 const market = (id) => S.meta.markets.find((m) => m.id === id);
 const label = (id) => market(id)?.label ?? id;
+const gameTitle = (id) => S.meta.games.find((g) => g.app_id === id)?.title ?? String(id);
 const ICON = {
   lock: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></svg>',
   check: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 8.5l3.2 3L13 4.5"/></svg>',
   coin: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v6M6.3 6.6h2.9a1.2 1.2 0 0 1 0 2.4H6.8"/></svg>',
+  arrow: '<svg class="arrow" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M2.5 8h11M9.5 4l4 4-4 4"/></svg>',
+  play: '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4.5 2.8v10.4a.6.6 0 0 0 .9.5l8.2-5.2a.6.6 0 0 0 0-1L5.4 2.3a.6.6 0 0 0-.9.5z"/></svg>',
+  stop: '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" rx="1.5"/></svg>',
+  item: '<svg class="ph" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M8 17l16-9 16 9v14l-16 9-16-9z"/><path d="M8 17l16 9 16-9M24 26v14"/></svg>',
 };
 
 async function api(method, path, body) {
   const opts = { method, headers: { "X-SkinEdge": "1" } };
   if (body !== undefined) { opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
   let res;
-  try { res = await fetch(path, opts); } catch { throw { error: "Интерфейс не отвечает. Окно skinedge ui закрыто?" }; }
+  try { res = await fetch(path, opts); } catch { goOffline(); throw { error: "SkinEdge не отвечает: приложение выключено" }; }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw { error: data.error || `Ошибка ${res.status}`, fields: data.fields || {} };
   return data;
@@ -346,15 +447,216 @@ function showErrors(form, err) {
 }
 
 /* ---------- шапка ---------- */
-function renderStatus() {
-  const { scanner, fx } = S.meta;
-  const beat = scanner.heartbeat ? `отметка ${hm(scanner.heartbeat)}` : "ещё не запускался";
-  const pill = scanner.running
-    ? `<span class="pill ok">Сканер работает</span><span>${beat}</span>`
-    : `<span class="pill off">Сканер не запущен</span><span>${beat}</span>`;
-  const rate = fx ? `<span class="num">1 EUR = ${esc(fx.usd_per_eur)} USD</span><span class="muted">${esc(fx.source)}</span>` : `<span class="muted">курса USD нет</span>`;
-  $("#status").innerHTML = pill + rate;
+function scannerPill(sc) {
+  if (sc.state === "running") return `<a class="pill ok" href="#deals">${sc.pass ? `Сканер: идёт проход ${sc.pass}` : "Сканер работает"}</a>`;
+  if (sc.state === "stopping") return `<a class="pill warn" href="#deals">Сканер останавливается</a>`;
+  if (sc.state === "external") return `<a class="pill ok" href="#deals">Сканер работает в другом окне</a>`;
+  return `<a class="pill off" href="#deals">Сканер остановлен</a>`;
 }
+function renderStatus() {
+  const sc = S.scan ?? S.meta.scanner, fx = S.meta.fx;
+  const rate = fx ? `<span class="num">1 EUR = ${esc(fx.usd_per_eur)} USD</span><span class="muted">${esc(fx.source)}</span>` : `<span class="muted">курса USD нет</span>`;
+  $("#status").innerHTML = scannerPill(sc) + rate;
+  $("#quit").hidden = !S.meta.can_quit;
+}
+
+/* ---------- сканер ---------- */
+function lastPass(last) {
+  if (!last) return "";
+  const games = (last.games || []).map(gameTitle).join(", ");
+  if (!last.ok) return `<p class="note bad">Проход ${last.n} в ${when(last.at)} (${esc(games)}) не удался: ${esc(last.error)}. Следующий пройдёт по расписанию.</p>`;
+  const sent = last.notified ? ` · в Telegram ${last.notified}` : "";
+  return `<div class="last">Последний проход в ${when(last.at)} · ${esc(games)} · сравнено ${last.pairs}, найдено ${last.found} (полных расчётов ${last.complete}) · ${duration(last.took)}${sent}</div>`;
+}
+function renderRunbar() {
+  const sc = S.scan, start = `<button type="button" class="btn primary" data-scan="start">${ICON.play}Запустить сканер</button>`;
+  const stop = `<button type="button" class="btn" data-scan="stop"${sc.state === "stopping" ? " disabled" : ""}>${ICON.stop}Остановить</button>`;
+  let dot = "", title, sub = "", btn = sc.controls ? start : "";
+  if (sc.state === "running" && sc.pass) {
+    [dot, title, btn] = ["busy", `Идёт проход ${sc.pass}`, stop];
+    sub = "Загружаю цены площадок, проверяю реальные продажи и считаю маршруты. Обычно 1–3 минуты.";
+  } else if (sc.state === "running") {
+    [dot, title, btn] = ["on", "Сканер работает", stop];
+    sub = sc.next_at ? `Следующий проход в ${hm(sc.next_at)}. Новые сделки появятся карточками ниже.` : "";
+  } else if (sc.state === "stopping") {
+    [dot, title, btn] = ["warn", "Сканер останавливается", stop];
+    sub = "Доводит текущий проход до конца, следующего не будет.";
+  } else if (sc.state === "external") {
+    [dot, title, btn] = ["on", "Сканер работает в другом окне", ""];
+    sub = `Его находки тоже появляются здесь. Чтобы запускать сканер кнопкой, закрой окно skinedge run${sc.pid ? ` (процесс ${esc(sc.pid)})` : ""}: через минуту здесь появится кнопка запуска.`
+      + (sc.controls ? ` Окна нет? Значит, оно закрылось аварийно, отметка снимется сама через 20 минут. <button type="button" class="linkbtn" data-scan="force">Запустить всё равно</button>` : "");
+  } else {
+    title = "Сканер остановлен";
+    sub = sc.controls
+      ? "Проход каждые 15 минут: цены всех площадок, реальные продажи и комиссии. Новые сделки появятся карточками ниже и придут в Telegram."
+      : "Сканер запускается из приложения SkinEdge (SkinEdge.cmd).";
+  }
+  const err = sc.error ? `<p class="note bad">${esc(sc.error)}</p>` : "";
+  $("#runbar").innerHTML = `${dot === "busy" ? '<div class="sweep"></div>' : ""}
+    <div class="row1"><div class="state"><span class="dot ${dot}"></span>${title}</div>${btn}</div>
+    ${sub ? `<div class="last">${sub}</div>` : ""}${err}${lastPass(sc.last)}`;
+}
+async function scanAction(act, btn) {
+  if (act === "force" && btn.dataset.confirm !== "1") {
+    btn.dataset.confirm = "1"; btn.textContent = "Точно? Два сканера сразу удвоят запросы к площадкам";
+    return;
+  }
+  btn.disabled = true;
+  try {
+    if (act === "stop") {
+      S.scan = await api("POST", "/api/scanner/stop");
+      toast(S.scan.state === "stopping" ? "Остановлю после текущего прохода" : "Сканер остановлен");
+    } else {
+      S.scan = await api("POST", "/api/scanner/start", { force: act === "force" });
+      toast("Сканер запущен. Первые карточки появятся после прохода");
+    }
+  } catch (err) {
+    toast(err.error || "Не получилось", true);
+    await pollScanner();
+  } finally { btn.disabled = false; }
+  renderScanner(); schedulePoll();
+}
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-scan]");
+  if (b) scanAction(b.dataset.scan, b);
+});
+
+/* ---------- карточки сделок ---------- */
+function visibleDeals() {
+  let list = S.scan.deals.filter((d) => S.game === "all" || d.app_id === Number(S.game));
+  if (S.sort === "profit") list = [...list].sort((a, b) => Number(b.profit) - Number(a.profit));
+  if (S.sort === "new") list = [...list].sort((a, b) => b.first_seen.localeCompare(a.first_seen));
+  return list;
+}
+function renderGameFilters() {
+  const deals = S.scan.deals, ids = [...new Set(deals.map((d) => d.app_id))];
+  if (S.game !== "all" && !ids.includes(Number(S.game))) S.game = "all";
+  const btn = (value, text, n) => `<button type="button" data-game="${value}" aria-pressed="${String(S.game === String(value))}">${esc(text)} <span class="muted">${n}</span></button>`;
+  $("#deal-games").innerHTML = ids.length > 1
+    ? btn("all", "Все", deals.length) + ids.map((id) => btn(id, gameTitle(id), deals.filter((d) => d.app_id === id).length)).join("")
+    : "";
+}
+function emptyDeals(sc) {
+  const box = (inner) => `<div class="empty panel" style="grid-column:1/-1">${inner}</div>`;
+  const start = sc.controls ? `<button type="button" class="btn primary" data-scan="start">${ICON.play}Запустить сканер</button>` : "";
+  if ((sc.state === "running" || sc.state === "external") && !sc.last) {
+    return box("<strong>Идёт первый проход</strong><span>Загружаю цены с площадок. Карточки появятся, когда проход закончится.</span>");
+  }
+  if (sc.state === "running" || sc.state === "external" || sc.state === "stopping") {
+    return box('<strong>Выгодных сделок сейчас нет</strong><span>В последних проходах при текущих настройках ничего не нашлось. Сканер продолжает искать.</span><span class="muted small">Можно расширить диапазон цен или снизить пороги прибыли и ROI: <a href="#settings">настройки сканера</a>.</span>');
+  }
+  if (sc.last) {
+    return box(`<strong>Сканер остановлен</strong><span>Сделки старше двух часов скрыты: цены уже могли уйти. Запусти сканер, чтобы найти свежие.</span>${start}`);
+  }
+  return box(`<strong>Сканер ещё не запускался</strong><span>Запусти его: первый проход займёт пару минут, и найденные сделки появятся здесь карточками.</span>${start}`);
+}
+function legLink(url, mkt) {
+  const name = esc(label(mkt));
+  return url && /^https:\/\//.test(url)
+    ? `<a class="m" href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="Открыть предмет на ${name}">${name}</a>`
+    : `<span class="m">${name}</span>`;
+}
+function dealCard(d, i, enter) {
+  const fresh = d.first_seen === d.found_at;
+  const art = d.image ? `<img src="${esc(d.image)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ICON.item;
+  const chips = [];
+  if (!d.complete) chips.push('<span class="chip warn">неполный расчёт</span>');
+  if (d.wallet) chips.push('<span class="chip warn">Steam Wallet</span>');
+  const meta = [
+    `Капитал заморожен ${d.lock_days} дн.${d.margin != null ? ` · цена продажи может упасть на ${share(d.margin)}` : ""}`,
+    esc(d.basis),
+    ...d.flags.map((f) => `<span class="flag">${esc(f)}</span>`),
+    fresh ? `Найдена в ${when(d.found_at)}` : `Держится с ${when(d.first_seen)}, проверена в ${hm(d.found_at)}`,
+  ];
+  return `<article class="deal${enter ? " enter" : ""}" style="--i:${Math.min(i, 8)}">
+    <div class="art">${art}<div class="badges"><span class="game">${esc(gameTitle(d.app_id))}</span>${fresh ? '<span class="badge-new">Новая</span>' : ""}</div></div>
+    <div class="content">
+      <h3 class="deal-name" title="${esc(d.name)}">${esc(d.name)}</h3>
+      <div class="route">
+        <div class="leg"><span class="k">Купить</span>${legLink(d.buy_url, d.buy_market)}<span class="p">${money(d.buy_price, d.buy_currency)}</span></div>
+        ${ICON.arrow}
+        <div class="leg sell"><span class="k">Продать</span>${legLink(d.sell_url, d.sell_market)}<span class="p">≈ ${money(d.sell_price, d.sell_currency)}</span></div>
+      </div>
+      <div class="gain"><span class="big ${tone(d.profit)}">${signed(d.profit)}<small>${esc(d.currency)}</small></span><span class="roi">ROI ${pct(d.roi)}</span></div>
+      ${chips.length ? `<div class="chips">${chips.join("")}</div>` : ""}
+      <div class="deal-meta">${meta.map((m) => `<span>${m}</span>`).join("")}</div>
+    </div>
+    <div class="deal-actions"><button type="button" class="btn small" data-deal="${i}">Купил — внести в журнал</button></div>
+  </article>`;
+}
+function renderDeals() {
+  renderGameFilters();
+  const list = visibleDeals();
+  const sig = [S.game, S.sort, S.scan.state, !!S.scan.last, ...list.map((d) => d.key + d.found_at + (d.image || ""))].join("|");
+  if (sig === S.sig) return;
+  S.sig = sig; S.visible = list;
+  const box = $("#cards");
+  if (!S.scan.deals.length) { box.innerHTML = emptyDeals(S.scan); return; }
+  if (!list.length) { box.innerHTML = '<div class="empty" style="grid-column:1/-1"><span>Для этой игры сейчас сделок нет.</span></div>'; return; }
+  box.innerHTML = list.map((d, i) => dealCard(d, i, S.rendered && !S.shown.has(d.key))).join("");
+  list.forEach((d) => S.shown.add(d.key));
+  S.rendered = true;
+}
+function renderScanner() { renderStatus(); renderRunbar(); renderDeals(); }
+$("#deal-games").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-game]");
+  if (b) { S.game = b.dataset.game; renderDeals(); }
+});
+$("#deal-sort").addEventListener("change", (e) => { S.sort = e.target.value; renderDeals(); });
+$("#cards").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-deal]");
+  if (b) toJournal(S.visible[Number(b.dataset.deal)]);
+});
+document.addEventListener("error", (e) => {
+  const img = e.target;
+  if (img instanceof HTMLImageElement && img.closest(".art")) img.outerHTML = ICON.item;
+}, true);
+function toJournal(d) {
+  location.hash = "#journal";
+  renderNewForm({
+    app_id: d.app_id, name: d.name, bought_at: today(),
+    buy_market: d.buy_market, buy_price: d.buy_price,
+    target_market: d.sell_market, target_price: d.sell_price,
+    note: `сигнал сканера ${dmy(d.found_at)} ${hm(d.found_at)}`,
+  });
+  const input = $("#n-buy_price");
+  input.scrollIntoView({ block: "center" }); input.focus(); input.select();
+  toast("Проверь цену, за которую купил, и нажми «Добавить в журнал»");
+}
+
+/* ---------- опрос и выключение ---------- */
+let pollTimer;
+async function pollScanner() {
+  try { S.scan = await api("GET", "/api/scanner"); renderScanner(); } catch { /* goOffline уже показал баннер */ }
+}
+function schedulePoll() {
+  clearTimeout(pollTimer);
+  if (S.offline) return;
+  const busy = S.scan && S.scan.state !== "stopped";
+  const ms = document.hidden ? 30000 : busy ? 4000 : 15000;
+  pollTimer = setTimeout(async () => { await pollScanner(); schedulePoll(); }, ms);
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden && !S.offline && S.scan) { pollScanner(); schedulePoll(); } });
+function goOffline() {
+  if (S.offline) return;
+  S.offline = true; clearTimeout(pollTimer);
+  $("#offline").hidden = false;
+  document.querySelectorAll("main button, header button").forEach((b) => (b.disabled = true));
+  const retry = setInterval(async () => {
+    try { if ((await fetch("/api/ping", { cache: "no-store" })).ok) { clearInterval(retry); location.reload(); } } catch { /* ещё выключен */ }
+  }, 10000);
+}
+$("#quit").addEventListener("click", async (e) => {
+  const b = e.currentTarget;
+  if (!b.classList.contains("armed")) {
+    b.classList.add("armed");
+    b.textContent = S.scan && S.scan.state !== "stopped" && S.scan.state !== "external" ? "Сканер тоже остановится. Выключить?" : "Точно выключить?";
+    setTimeout(() => { b.classList.remove("armed"); b.textContent = "Выключить"; }, 5000);
+    return;
+  }
+  try { await api("POST", "/api/shutdown"); } catch { /* уже выключен */ }
+  goOffline();
+});
 
 /* ---------- сводка ---------- */
 function renderKpis() {
@@ -451,9 +753,9 @@ async function hintQuote(form, p) {
 }
 
 /* ---------- новая покупка ---------- */
-function renderNewForm() {
+function renderNewForm(prefill = {}) {
   const form = $("#new-form");
-  form.innerHTML = tradeFields("n") + `<div class="actions"><button type="submit" class="btn primary">Добавить в журнал</button><span class="muted small">Курс USD запишется на сегодня.</span></div>`;
+  form.innerHTML = tradeFields("n", prefill) + `<div class="actions"><button type="submit" class="btn primary">Добавить в журнал</button><span class="muted small">Курс USD запишется на сегодня.</span></div>`;
   wireTradeForm(form, "n");
 }
 $("#new-form").addEventListener("submit", async (e) => {
@@ -630,11 +932,13 @@ async function loadJournal() {
   S.trades = data.trades; S.summary = data.summary;
   renderKpis(); renderLedger();
 }
+const TABS = ["deals", "journal", "settings"];
 function route() {
-  const tab = location.hash === "#scanner" ? "scanner" : "journal";
-  $("#view-journal").hidden = tab !== "journal";
-  $("#view-scanner").hidden = tab !== "scanner";
-  for (const name of ["journal", "scanner"]) {
+  let tab = location.hash.slice(1);
+  if (tab === "scanner") tab = "settings"; // прежний адрес вкладки настроек
+  if (!TABS.includes(tab)) tab = "deals";
+  for (const name of TABS) {
+    $(`#view-${name}`).hidden = name !== tab;
     const a = $(`#tab-${name}`);
     if (name === tab) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   }
@@ -644,10 +948,15 @@ async function start() {
   route();
   try {
     S.meta = await api("GET", "/api/state");
-    renderStatus(); renderSettings(); renderNewForm();
+    S.scan = await api("GET", "/api/scanner");
+    renderScanner(); renderSettings(); renderNewForm();
     await loadJournal();
-  } catch (err) { toast(err.error || "Не удалось загрузить данные", true); }
-  setInterval(async () => { try { S.meta = { ...S.meta, ...(await api("GET", "/api/state")) }; renderStatus(); } catch {} }, 60000);
+  } catch (err) { if (!S.offline) toast(err.error || "Не удалось загрузить данные", true); }
+  schedulePoll();
+  setInterval(async () => {
+    if (S.offline) return;
+    try { S.meta = { ...S.meta, ...(await api("GET", "/api/state")) }; renderStatus(); } catch { /* баннер покажет goOffline */ }
+  }, 60000);
 }
 start();
 </script>

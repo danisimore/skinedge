@@ -11,6 +11,7 @@ from test_telegram import TOKEN, make, ok
 from typer.testing import CliRunner
 
 import skinedge.cli as cli
+from skinedge import feed
 from skinedge.cli import app
 from skinedge.fees.schedule import FeeSchedule
 from skinedge.fx import FxRates
@@ -63,6 +64,9 @@ class FakeDMarket:
     def fetch_last_sales(self, title: str, app_id: int = 730, limit: int = 20) -> list[Sale]:
         self.sales_for.append(title)
         return []
+
+    def fetch_image(self, title: str, app_id: int = 730) -> str | None:
+        return f"https://steamcommunity-a.akamaihd.net/economy/image/{len(title)}"
 
 
 def _old_trade(at: datetime) -> PaperTrade:
@@ -332,7 +336,7 @@ def test_cli_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     now = datetime.now(UTC)
     monkeypatch.setattr(cli, "TelegramClient", bot)
     monkeypatch.setattr(cli, "SkinportSource", lambda: FakeSkinport(now))
-    monkeypatch.setattr(cli, "_dmarket_source", lambda settings: FakeDMarket(now))
+    monkeypatch.setattr(cli, "_dmarket", lambda settings: FakeDMarket(now))
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("SKINEDGE_DB_PATH", str(tmp_path / "x.db"))
     monkeypatch.setenv("SKINEDGE_LOG_PATH", str(tmp_path / "logs" / "run.log"))
@@ -340,12 +344,19 @@ def test_cli_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TG_CHAT_ID", "777")
 
     args = ["run", "--iterations", "1", "--usd-per-eur", "1.10", "--limit", "2", "--no-report"]
+    args += ["--no-marketcsgo", "--no-lisskins"]  # без сети
     result = CliRunner().invoke(app, args)
     assert result.exit_code == 0, result.output
     assert "Проход 1: сравнено 1, возможностей 1" in result.output
     assert "Выполнено проходов: 1" in result.output
     log = (tmp_path / "logs" / "run.log").read_text(encoding="utf-8")
     assert "Проход 1" in log and TOKEN not in log
+    s = Storage(tmp_path / "x.db")
+    cards = feed.load(s, datetime.now(UTC))
+    assert cards["last"]["ok"] and cards["last"]["pairs"] == 1
+    assert [d["name"] for d in cards["deals"]] == ["AK-47 | Redline (Field-Tested)"]
+    assert cards["deals"][0]["image"].startswith("https://steamcommunity-a.akamaihd.net/")
+    s.close()
     assert "AK-47 | Redline (Field-Tested)" in json.loads(seen[0].content)["text"]
 
     short = CliRunner().invoke(app, ["run", "--every", "3"])

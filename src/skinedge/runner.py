@@ -13,13 +13,19 @@
 по очереди, по одной за проход (см. :func:`games_for_pass`).
 
 Настройки, сохранённые в интерфейсе (:mod:`skinedge.tuning`), перечитываются в
-начале каждого прохода и действуют вместо флагов запуска.
+начале каждого прохода и действуют вместо флагов запуска. Итог каждого прохода и
+найденные сделки записываются в базу для карточек интерфейса (:mod:`skinedge.feed`).
+
+В приложении (``skinedge app``) сканер работает в потоке и останавливается
+событием ``stop``: ожидание следующего прохода прерывается сразу, а начатый
+проход доводится до конца.
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -27,6 +33,7 @@ from datetime import UTC, datetime, timedelta, tzinfo
 from decimal import Decimal
 from html import escape
 
+from skinedge import feed
 from skinedge.fx import FxRates
 from skinedge.games import title
 from skinedge.money import Currency
@@ -36,6 +43,7 @@ from skinedge.paper import build_report
 from skinedge.pipeline import Pipeline, ScanOptions, ScanResult
 from skinedge.scanner import ScanConfig
 from skinedge.sources.base import SourceError
+from skinedge.storage import Storage
 from skinedge.tuning import ScanSettings
 from skinedge.tuning import load as load_tuning
 
@@ -73,6 +81,12 @@ class AlreadyRunning(RuntimeError):
     """С этой базой уже работает другой фоновый запуск."""
 
 
+def release_lock(storage: Storage) -> None:
+    """Снимает отметку работающего сканера, если её оставил этот процесс."""
+    if storage.get_meta(PID) == str(os.getpid()):
+        storage.delete_meta(HEARTBEAT)
+
+
 @dataclass(frozen=True)
 class RunOptions:
     """Расписание.
@@ -103,8 +117,10 @@ class Runner:
         fx_source: Откуда брать курс (ЕЦБ или заданный вручную).
         spread: Спред конвертации для отчёта по виртуальным сделкам.
         clock: Текущее время UTC (для тестов).
-        sleep: Функция ожидания (для тестов).
+        sleep: Функция ожидания; в приложении ``stop.wait``, чтобы остановка
+            прерывала ожидание.
         tz: Часовой пояс отчёта; ``None`` — местный.
+        stop: Событие остановки; ``None`` — работать до ``iterations`` или Ctrl+C.
     """
 
     def __init__(
@@ -115,8 +131,9 @@ class Runner:
         fx_source: Callable[[], FxRates],
         spread: Decimal,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
-        sleep: Callable[[float], None] = time.sleep,
+        sleep: Callable[[float], object] = time.sleep,
         tz: tzinfo | None = None,
+        stop: threading.Event | None = None,
     ) -> None:
         if opts.every < MIN_EVERY:
             raise ValueError(f"Интервал не меньше {MIN_EVERY.seconds // 60} минут")
@@ -129,6 +146,9 @@ class Runner:
         self.clock = clock
         self.sleep = sleep
         self.tz = tz
+        self.stop = stop
+        self.current: int | None = None  # номер идущего прохода
+        self.next_at: datetime | None = None  # начало следующего прохода
         self.failures = 0  # сбоев подряд
         self.alerted = False
         self.passes = 0  # с прошлого отчёта
@@ -140,7 +160,7 @@ class Runner:
     # ---------- цикл ----------
 
     def run(self) -> int:
-        """Выполняет проходы по расписанию до ``iterations`` или Ctrl+C.
+        """Выполняет проходы по расписанию до ``iterations``, остановки или Ctrl+C.
 
         Returns:
             Сколько проходов выполнено.
@@ -148,20 +168,33 @@ class Runner:
         Raises:
             AlreadyRunning: Если работает другой запуск.
         """
-        self._acquire()
+        self.acquire()
+        try:
+            return self.loop()
+        finally:
+            self.release()
+
+    def loop(self) -> int:
+        """Проходы по расписанию; отметку ставит :meth:`acquire`, снимает :meth:`release`.
+
+        Returns:
+            Сколько проходов выполнено.
+        """
         done = 0
         try:
             while True:
                 started = self.clock()
                 self.tick(done + 1)
                 done += 1
-                if self.opts.iterations and done >= self.opts.iterations:
+                if (self.opts.iterations and done >= self.opts.iterations) or self._stopping():
                     return done
-                nxt = started + self.opts.every
-                log.info("Следующий проход в %s", self._local(nxt).strftime("%H:%M"))
-                self._wait_until(nxt)
+                self.next_at = started + self.opts.every
+                log.info("Следующий проход в %s", self._local(self.next_at).strftime("%H:%M"))
+                self._wait_until(self.next_at)
+                if self._stopping():
+                    return done
         finally:
-            self._release()
+            self.next_at = None
 
     def tick(self, n: int) -> ScanResult | None:
         """Один проход с обработкой сбоя и ежедневными делами.
@@ -170,19 +203,24 @@ class Runner:
             Итог прохода или ``None`` при сбое.
         """
         started = self.clock()
+        self.current = n
         self._beat(started)
         self.passes += 1
+        games = games_for_pass(self.scan.games, n)
         result: ScanResult | None = None
+        error: str | None = None
         try:
             self.pipeline.fx = self._rates(started)
-            opts = replace(self.scan, games=games_for_pass(self.scan.games, n))
-            result = self.pipeline.run(self._tuned(opts))
+            result = self.pipeline.run(self._tuned(replace(self.scan, games=games)))
         except Exception as exc:  # любой сбой прохода не должен останавливать работу
+            error = _describe(exc)
             self._failed(n, exc)
         else:
             self._succeeded(n, result, self.clock() - started)
+        self._publish(n, started, games, result, error)
         self._chores(self.clock())
         self._beat(self.clock())
+        self.current = None
         return result
 
     def _tuned(self, opts: ScanOptions) -> ScanOptions:
@@ -224,6 +262,41 @@ class Runner:
                 r.profit,
                 r.roi * 100,
             )
+
+    def _publish(
+        self,
+        n: int,
+        started: datetime,
+        games: tuple[int, ...],
+        result: ScanResult | None,
+        error: str | None,
+    ) -> None:
+        """Записывает итог прохода и найденные сделки для интерфейса."""
+        now = self.clock()
+        summary: dict[str, object] = {
+            "n": n,
+            "at": started.isoformat(),
+            "took": round((now - started).total_seconds()),
+            "games": list(games),
+            "ok": result is not None,
+            "error": error,
+        }
+        if result is not None:
+            summary.update(
+                pairs=result.pairs,
+                found=len(result.found),
+                complete=sum(o.result.complete for o in result.found),
+                recorded=result.recorded,
+                notified=result.notified,
+            )
+        try:
+            feed.record_pass(self.storage, summary)
+            if result is not None:
+                dmarket = self.pipeline.dmarket
+                fetch = dmarket.fetch_image if dmarket is not None else None
+                feed.update_deals(self.storage, result.at, games, result.found, fetch, now)
+        except Exception:
+            log.exception("Сделки для интерфейса не записаны")
 
     def _failed(self, n: int, exc: Exception) -> None:
         self.failures += 1
@@ -322,7 +395,15 @@ class Runner:
     def _local(self, moment: datetime) -> datetime:
         return moment.astimezone(self.tz)
 
-    def _acquire(self) -> None:
+    def _stopping(self) -> bool:
+        return self.stop is not None and self.stop.is_set()
+
+    def acquire(self) -> None:
+        """Ставит отметку работающего сканера.
+
+        Raises:
+            AlreadyRunning: Если отметка другого запуска свежая (и не ``force``).
+        """
         beat = self.storage.get_meta(HEARTBEAT)
         if beat is not None and not self.opts.force:
             last = datetime.fromisoformat(beat)
@@ -334,17 +415,19 @@ class Runner:
         self.storage.set_meta(PID, str(os.getpid()))
         self._beat(self.clock())
 
-    def _release(self) -> None:
-        if self.storage.get_meta(PID) == str(os.getpid()):
-            self.storage.delete_meta(HEARTBEAT)
+    def release(self) -> None:
+        """Снимает отметку, если её оставил этот процесс."""
+        release_lock(self.storage)
 
     def _beat(self, now: datetime) -> None:
-        self.storage.set_meta(HEARTBEAT, now.isoformat())
+        # После остановки отметку не обновляем: её снимают при выходе.
+        if not self._stopping():
+            self.storage.set_meta(HEARTBEAT, now.isoformat())
 
     def _wait_until(self, moment: datetime) -> None:
         while True:
             left = (moment - self.clock()).total_seconds()
-            if left <= 0:
+            if left <= 0 or self._stopping():
                 return
             self.sleep(min(left, BEAT))
             self._beat(self.clock())

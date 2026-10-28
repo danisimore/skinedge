@@ -2,18 +2,24 @@
 
 from __future__ import annotations
 
+import errno
 import logging
 import sys
+import threading
+import time
 import webbrowser
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Annotated
 
+import httpx
 import typer
+from pydantic import ValidationError
 
-from skinedge.config import Settings
+from skinedge.config import Settings, SetupError
 from skinedge.fees.models import FeeRule, Operation
 from skinedge.fees.schedule import FeeSchedule, Payout
 from skinedge.finance.route import BALANCE, FeeLine, RouteCalculator, RouteResult
@@ -36,6 +42,7 @@ from skinedge.sources.marketcsgo import MarketCSGOSource
 from skinedge.sources.skinport import SkinportSource
 from skinedge.storage import Storage
 from skinedge.tuning import load as load_tuning
+from skinedge.ui.control import ScannerControl
 from skinedge.ui.server import App as UiApp
 from skinedge.ui.server import Rates, serve
 
@@ -80,16 +87,27 @@ def _print_lines(title: str, lines: list[FeeLine]) -> None:
         typer.echo(f"  - {line.label}: база {line.base} → {line.amount}{mark}")
 
 
-def _schedule(settings: Settings) -> FeeSchedule:
-    """Правила комиссий с учётом выбранного способа вывода DMarket."""
+def _load_schedule(settings: Settings) -> FeeSchedule:
+    """Правила комиссий с учётом выбранного способа вывода DMarket.
+
+    Raises:
+        SetupError: Если способ вывода в ``.env`` неизвестен.
+    """
     schedule = FeeSchedule.load(settings.fee_rules_path)
     if settings.dmarket_withdraw:
         try:
             schedule = schedule.with_withdraw("dmarket", settings.dmarket_withdraw)
         except ValueError as exc:
-            typer.echo(f"SKINEDGE_DMARKET_WITHDRAW: {exc}", err=True)
-            raise typer.Exit(1) from exc
+            raise SetupError(f"SKINEDGE_DMARKET_WITHDRAW: {exc}") from exc
     return schedule
+
+
+def _schedule(settings: Settings) -> FeeSchedule:
+    try:
+        return _load_schedule(settings)
+    except SetupError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
 
 
 def render(result: RouteResult) -> str:
@@ -200,22 +218,32 @@ def _age(quote: Quote, now: datetime) -> str:
     return f"{minutes} мин назад"
 
 
-def _dmarket_source(settings: Settings) -> DMarketSource:
+def _dmarket(settings: Settings) -> DMarketSource:
+    """Источник DMarket с ключами из ``.env``.
+
+    Raises:
+        SetupError: Если ключей нет или они не подходят.
+    """
     if not settings.dmarket_public_key or not settings.dmarket_secret_key:
-        typer.echo(
+        raise SetupError(
             "Нет ключей DMarket: заполни SKINEDGE_DMARKET_PUBLIC_KEY и "
-            "SKINEDGE_DMARKET_SECRET_KEY в .env",
-            err=True,
+            "SKINEDGE_DMARKET_SECRET_KEY в .env"
         )
-        raise typer.Exit(1)
     try:
         signer = DMarketSigner(
             settings.dmarket_public_key, settings.dmarket_secret_key.get_secret_value()
         )
     except ValueError as exc:
-        typer.echo(f"Ключи DMarket не подходят: {exc}", err=True)
-        raise typer.Exit(1) from exc
+        raise SetupError(f"Ключи DMarket не подходят: {exc}") from exc
     return DMarketSource(signer)
+
+
+def _dmarket_source(settings: Settings) -> DMarketSource:
+    try:
+        return _dmarket(settings)
+    except SetupError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
 
 
 @app.command()
@@ -531,9 +559,11 @@ LisSkins = Annotated[
 ]
 
 
-def _csfloat_source(settings: Settings) -> CSFloatSource | None:
+def _csfloat_source(
+    settings: Settings, say: Callable[[str], object] = typer.echo
+) -> CSFloatSource | None:
     if settings.csfloat_api_key is None:
-        typer.echo("Нет ключа CSFloat (SKINEDGE_CSFLOAT_KEY в .env): CSFloat не проверяется")
+        say("Нет ключа CSFloat (SKINEDGE_CSFLOAT_KEY в .env): CSFloat не проверяется")
         return None
     return CSFloatSource(settings.csfloat_api_key.get_secret_value())
 
@@ -635,18 +665,22 @@ def scan(
 
 
 def _run_logging(path: Path, verbose: bool) -> logging.Logger:
-    """Лог фонового запуска: консоль и файл с ротацией (5 файлов по 1 МБ)."""
+    """Лог: файл с ротацией (5 файлов по 1 МБ) и консоль, если она есть.
+
+    Без консоли (приложение запущено через pythonw) ``sys.stdout`` равен ``None``.
+    """
     _quiet_http()
     logger = logging.getLogger("skinedge")
     _close_handlers(logger)
     logger.setLevel(logging.DEBUG if verbose else logging.INFO)
     logger.propagate = False
-    console = logging.StreamHandler(sys.stdout)
-    console.setFormatter(logging.Formatter("%(asctime)s %(message)s", "%H:%M:%S"))
+    if sys.stdout is not None:
+        console = logging.StreamHandler(sys.stdout)
+        console.setFormatter(logging.Formatter("%(asctime)s %(message)s", "%H:%M:%S"))
+        logger.addHandler(console)
     path.parent.mkdir(parents=True, exist_ok=True)
     file = RotatingFileHandler(path, maxBytes=1_000_000, backupCount=5, encoding="utf-8")
     file.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
-    logger.addHandler(console)
     logger.addHandler(file)
     # Ожидание лимита запросов DMarket (раз в секунду) засоряет лог.
     logging.getLogger("skinedge.sources").setLevel(logging.DEBUG if verbose else logging.WARNING)
@@ -689,7 +723,11 @@ def run_command(
     lisskins: LisSkins = True,
     verbose: Verbose = False,
 ) -> None:
-    """Сканирует по расписанию, пока не остановят (Ctrl+C). Только анализ, без сделок."""
+    """Сканирует по расписанию, пока не остановят (Ctrl+C). Только анализ, без сделок.
+
+    Обычно сканер запускают кнопкой в приложении (``skinedge app``); эта команда —
+    для запуска без интерфейса.
+    """
     if every < MIN_EVERY.seconds // 60:
         raise typer.BadParameter(f"--every: не меньше {MIN_EVERY.seconds // 60} минут")
     settings = Settings()
@@ -717,31 +755,28 @@ def run_command(
     def fx_source() -> FxRates:
         return manual or ecb.fetch_rates(settings.fx_spread)
 
-    storage = Storage(settings.db_path)
-    pipeline = Pipeline(
-        storage,
-        schedule,
-        FxRates(rates={}, spread=settings.fx_spread),
-        skinport=SkinportSource(),
-        dmarket=_dmarket_source(settings),
-        csfloat=_csfloat_source(settings) if csfloat > 0 else None,
-        marketcsgo=MarketCSGOSource() if marketcsgo else None,
-        lisskins=LisSkinsSource() if lisskins else None,
-        telegram=telegram,
-        out=logger.info,
+    run_opts = RunOptions(
+        every=timedelta(minutes=every),
+        iterations=iterations,
+        report_hour=report_hour if report else None,
+        force=force,
     )
-    runner = Runner(
-        pipeline,
-        opts,
-        RunOptions(
-            every=timedelta(minutes=every),
-            iterations=iterations,
-            report_hour=report_hour if report else None,
-            force=force,
-        ),
-        fx_source,
-        settings.fx_spread,
-    )
+    try:
+        runner = _make_runner(
+            settings,
+            schedule,
+            opts,
+            run_opts,
+            telegram,
+            fx_source,
+            logger,
+            marketcsgo=marketcsgo,
+            lisskins=lisskins,
+        )
+    except SetupError as exc:
+        logger.error("%s", exc)
+        _close_handlers(logger)
+        raise typer.Exit(1) from exc
     logger.info(
         "SkinEdge: проход каждые %d мин, лог %s. Только анализ, сделки не совершаются. "
         "Остановить: Ctrl+C",
@@ -766,8 +801,55 @@ def run_command(
     except KeyboardInterrupt:
         logger.info("Остановлено")
     finally:
-        storage.close()
+        runner.storage.close()
         _close_handlers(logger)
+
+
+def _make_runner(
+    settings: Settings,
+    schedule: FeeSchedule,
+    opts: ScanOptions,
+    run_opts: RunOptions,
+    telegram: tuple[TelegramClient, str] | None,
+    fx_source: Callable[[], FxRates],
+    logger: logging.Logger,
+    *,
+    marketcsgo: bool = True,
+    lisskins: bool = True,
+    stop: threading.Event | None = None,
+) -> Runner:
+    """Сканер по расписанию со всеми площадками и своим соединением с базой.
+
+    Args:
+        stop: Событие остановки (приложение); сканер тогда работает в потоке.
+
+    Raises:
+        SetupError: Если нет ключей DMarket или они не подходят.
+    """
+    dmarket = _dmarket(settings)
+    csfloat = _csfloat_source(settings, logger.info) if opts.csfloat > 0 else None
+    storage = Storage(settings.db_path, threads=stop is not None)
+    pipeline = Pipeline(
+        storage,
+        schedule,
+        FxRates(rates={}, spread=settings.fx_spread),
+        skinport=SkinportSource(),
+        dmarket=dmarket,
+        csfloat=csfloat,
+        marketcsgo=MarketCSGOSource() if marketcsgo else None,
+        lisskins=LisSkinsSource() if lisskins else None,
+        telegram=telegram,
+        out=logger.info,
+    )
+    return Runner(
+        pipeline,
+        opts,
+        run_opts,
+        fx_source,
+        settings.fx_spread,
+        sleep=stop.wait if stop is not None else time.sleep,
+        stop=stop,
+    )
 
 
 telegram_app = typer.Typer(help="Уведомления в Telegram.")
@@ -903,37 +985,120 @@ def paper_report(
     )
 
 
-@app.command("ui")
-def ui_command(
+# Порт занят или зарезервирован Windows (10013 — WSAEACCES).
+PORT_ERRORS = {errno.EADDRINUSE, errno.EACCES, 10013}
+
+
+@app.command("app")
+def app_command(
     port: Annotated[int, typer.Option(help="Порт на 127.0.0.1")] = 8765,
     browser: Annotated[
         bool, typer.Option("--browser/--no-browser", help="Сразу открыть в браузере")
     ] = True,
+    scan_now: Annotated[
+        bool, typer.Option("--scan/--no-scan", help="Сразу запустить сканер (для автозапуска)")
+    ] = False,
     verbose: Verbose = False,
 ) -> None:
-    """Интерфейс в браузере: настройки сканера и журнал сделок (только на этом компьютере)."""
-    logging.basicConfig(level=logging.DEBUG if verbose else logging.INFO, format="%(message)s")
-    _quiet_http()
-    settings = Settings()
-    schedule = _schedule(settings)
+    """Приложение SkinEdge: интерфейс в браузере, сканер запускается кнопкой.
+
+    Журнал сделок, настройки и карточки найденных сделок. Работает только на этом
+    компьютере. Окно консоли не нужно: SkinEdge.cmd запускает приложение через
+    pythonw, ход работы пишется в лог. Повторный запуск открывает уже работающее
+    приложение. Выключить — кнопкой «Выключить» в интерфейсе.
+    """
+    url = f"http://127.0.0.1:{port}/"
+    if _already_open(port):
+        if browser:
+            webbrowser.open(url)
+        return
+    try:
+        settings = Settings()
+    except ValidationError as exc:
+        # Только имена полей: значения из .env могут быть секретными.
+        fields = ", ".join(".".join(map(str, e["loc"])) for e in exc.errors())
+        _alert(f"SkinEdge не запустился: в .env неверные значения ({fields})")
+        raise typer.Exit(1) from exc
+    logger = _run_logging(settings.log_path, verbose)
+    try:
+        _run_app(settings, logger, port, browser, scan_now)
+    except SetupError as exc:
+        logger.error("SkinEdge не запустился: %s", exc)
+        _alert(f"SkinEdge не запустился: {exc}")
+        raise typer.Exit(1) from exc
+    except Exception as exc:  # без консоли ошибка иначе потеряется
+        if isinstance(exc, OSError) and exc.errno in PORT_ERRORS:
+            logger.error("Порт %d занят: %s", port, exc)
+            _alert(
+                f"Порт {port} занят другой программой. Запусти SkinEdge с другим портом: "
+                f"SkinEdge.cmd --port {port + 1}"
+            )
+        else:
+            logger.exception("SkinEdge остановился из-за ошибки")
+            _alert(f"SkinEdge остановился из-за ошибки: {exc}\n\nПодробности: {settings.log_path}")
+        raise typer.Exit(1) from exc
+    finally:
+        _close_handlers(logger)
+
+
+def _run_app(
+    settings: Settings, logger: logging.Logger, port: int, browser: bool, scan_now: bool
+) -> None:
+    schedule = _load_schedule(settings)
+    telegram = _telegram_target(settings)
+    if telegram is None:
+        logger.warning("Telegram не настроен: уведомлений, отчёта и тревог не будет")
+    # Те же параметры, что у skinedge run по умолчанию; настройки из интерфейса — поверх.
+    opts = _scan_options(
+        ALL_GAMES, 300, "1", "500", "0.50", "0.05", 30, 40, True, True, telegram is not None, 40
+    )
+
+    def fx_source() -> FxRates:
+        return ecb.fetch_rates(settings.fx_spread)
+
+    def factory(stop: threading.Event, force: bool) -> Runner:
+        run_opts = RunOptions(force=force)
+        return _make_runner(
+            settings, schedule, opts, run_opts, telegram, fx_source, logger, stop=stop
+        )
+
     storage = Storage(settings.db_path, threads=True)
-    rates = Rates(lambda: ecb.fetch_rates(settings.fx_spread), storage, lambda: datetime.now(UTC))
-    ui = UiApp(storage, schedule, rates, settings.fx_spread)
+    control = ScannerControl(factory)
+    rates = Rates(fx_source, storage, lambda: datetime.now(UTC))
+    ui = UiApp(storage, schedule, rates, settings.fx_spread, defaults=opts, control=control)
 
     def ready(url: str) -> None:
-        typer.echo(f"Интерфейс SkinEdge: {url}")
-        typer.echo("Остановить: Ctrl+C или закрыть это окно. Сканер при этом не останавливается.")
+        logger.info("SkinEdge открыт: %s. Только анализ, сделки не совершаются", url)
+        if scan_now:
+            try:
+                control.start()
+            except (AlreadyRunning, SetupError) as exc:
+                logger.error("Сканер не запущен: %s", exc)
         if browser:
             webbrowser.open(url)
 
     try:
         serve(ui, port, ready)
-    except OSError as exc:
-        typer.echo(
-            f"Не удалось занять порт {port} ({exc}). Интерфейс уже открыт в другом окне? "
-            f"Или запусти с другим портом: --port {port + 1}",
-            err=True,
-        )
-        raise typer.Exit(1) from exc
     finally:
+        control.shutdown(storage, timeout=10)
         storage.close()
+        logger.info("SkinEdge выключен")
+
+
+def _already_open(port: int) -> bool:
+    """На порту уже работает SkinEdge: второй запуск только откроет его в браузере."""
+    try:
+        response = httpx.get(f"http://127.0.0.1:{port}/api/ping", timeout=3, trust_env=False)
+        return response.status_code == 200 and response.json().get("app") == "SkinEdge"
+    except (httpx.HTTPError, ValueError, AttributeError):
+        return False
+
+
+def _alert(text: str) -> None:
+    """Сообщение об ошибке: в консоль, а без консоли (pythonw) — окном Windows."""
+    if sys.stdout is not None or sys.platform != "win32":
+        typer.echo(text, err=True)
+        return
+    import ctypes
+
+    ctypes.windll.user32.MessageBoxW(None, text, "SkinEdge", 0x10)

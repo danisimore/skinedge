@@ -1,4 +1,7 @@
-"""HTTP-сервер интерфейса: страница и JSON API поверх той же базы, что у сканера.
+"""HTTP-сервер приложения: страница и JSON API поверх той же базы, что у сканера.
+
+Сканер работает в этом же процессе (:mod:`skinedge.ui.control`) и запускается
+кнопкой; найденные им сделки страница показывает карточками (:mod:`skinedge.feed`).
 
 Сервер слушает только 127.0.0.1. Чтобы чужой сайт, открытый в том же браузере,
 не мог ничего изменить через этот адрес, сервер принимает только свой заголовок
@@ -12,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 import time
 from collections.abc import Callable
@@ -25,19 +29,22 @@ from urllib.parse import parse_qs, urlsplit
 
 from pydantic import ValidationError
 
+from skinedge import feed
+from skinedge.config import SetupError
 from skinedge.fees.schedule import FeeSchedule, Payout
 from skinedge.fx import FxRates
 from skinedge.games import TITLES
 from skinedge.journal import NoRate, Trade, Valuation, payout_at, tradable_from, valuate
 from skinedge.money import Currency
 from skinedge.pipeline import ScanOptions
-from skinedge.runner import HEARTBEAT, LOCK_STALE
+from skinedge.runner import HEARTBEAT, LOCK_STALE, PID, AlreadyRunning
 from skinedge.sources.base import SourceError
 from skinedge.storage import Storage
 from skinedge.tuning import ScanSettings
 from skinedge.tuning import load as load_tuning
 from skinedge.tuning import reset as reset_tuning
 from skinedge.tuning import save as save_tuning
+from skinedge.ui.control import ScannerControl
 
 log = logging.getLogger(__name__)
 
@@ -193,7 +200,11 @@ class App:
         rates: Курс USD.
         spread: Потери при конвертации валют.
         defaults: Параметры, с которыми сканер работает без настроек из интерфейса.
+        control: Сканер этого процесса; ``None`` — запускать сканер отсюда нельзя.
         clock: Текущее время UTC.
+
+    Attributes:
+        quit: Выключает приложение (задаёт :func:`serve`).
     """
 
     def __init__(
@@ -203,6 +214,7 @@ class App:
         rates: Rates,
         spread: Decimal,
         defaults: ScanOptions | None = None,
+        control: ScannerControl | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self.storage = storage
@@ -210,7 +222,9 @@ class App:
         self.rates = rates
         self.spread = spread
         self.defaults = ScanSettings.of(defaults or ScanOptions())
+        self.control = control
         self.clock = clock
+        self.quit: Callable[[], None] | None = None
         self._names: list[str] = []
         self._names_at: float | None = None
 
@@ -231,6 +245,21 @@ class App:
             return Response(200, page, "text/html; charset=utf-8")
         if path == "/api/state" and method == "GET":
             return _json(200, self.state())
+        if path == "/api/ping" and method == "GET":
+            return _json(200, {"app": "SkinEdge"})
+        if path == "/api/scanner" and method == "GET":
+            return _json(200, self.scanner())
+        if path == "/api/scanner/start" and method == "POST":
+            return self.start_scanner(_body(body).get("force") is True)
+        if path == "/api/scanner/stop" and method == "POST":
+            if self.control is not None:
+                self.control.stop()
+            return _json(200, self.scanner())
+        if path == "/api/shutdown" and method == "POST":
+            if self.quit is None:
+                raise LookupError("Выключение работает только в приложении SkinEdge")
+            self.quit()
+            return _json(200, {"ok": True})
         if path == "/api/settings":
             if method == "PUT":
                 return _json(200, self.put_settings(_body(body)))
@@ -262,8 +291,6 @@ class App:
         """Площадки, игры, настройки сканера, курс и состояние фонового запуска."""
         saved = load_tuning(self.storage)
         rate, source, as_of = self.rates.current()
-        beat = self.storage.get_meta(HEARTBEAT)
-        beat_at = datetime.fromisoformat(beat) if beat else None
         return {
             "markets": [
                 {
@@ -283,11 +310,52 @@ class App:
             "fx": None
             if rate is None
             else {"usd_per_eur": str(rate), "source": source, "as_of": _iso(as_of)},
-            "scanner": {
-                "heartbeat": _iso(beat_at),
-                "running": beat_at is not None and self.clock() - beat_at < LOCK_STALE,
-            },
+            "scanner": self.scanner_state(),
+            "can_quit": self.quit is not None,
         }
+
+    # ---------- сканер ----------
+
+    def scanner_state(self) -> dict[str, Any]:
+        """Состояние сканера этого процесса или отметка другого запуска (``skinedge run``).
+
+        ``state``: ``running``, ``stopping``, ``stopped`` или ``external`` — с этой
+        базой работает сканер другого процесса.
+        """
+        own = self.control.status() if self.control is not None else ScannerControl.idle()
+        beat = self.storage.get_meta(HEARTBEAT)
+        beat_at = datetime.fromisoformat(beat) if beat else None
+        fresh = beat_at is not None and self.clock() - beat_at < LOCK_STALE
+        pid = self.storage.get_meta(PID)
+        state = own["state"]
+        if state == "stopped" and fresh and pid != str(os.getpid()):
+            state = "external"
+        return {
+            **own,
+            "state": state,
+            "running": state != "stopped",
+            "heartbeat": _iso(beat_at),
+            "pid": pid if state == "external" else None,
+            "controls": self.control is not None,
+        }
+
+    def scanner(self) -> dict[str, Any]:
+        """Состояние сканера, итог последнего прохода и найденные сделки."""
+        return {**self.scanner_state(), **feed.load(self.storage, self.clock())}
+
+    def start_scanner(self, force: bool) -> Response:
+        """Запускает сканер; 409, если с этой базой уже работает другой запуск."""
+        if self.control is None:
+            raise LookupError("Сканер запускается из приложения SkinEdge (SkinEdge.cmd)")
+        try:
+            self.control.start(force)
+        except AlreadyRunning as exc:
+            return _json(409, {"error": f"Сканер уже работает: {exc}", "can_force": True})
+        except SetupError as exc:
+            return _json(400, {"error": str(exc)})
+        return _json(200, self.scanner())
+
+    # ---------- настройки ----------
 
     def put_settings(self, data: dict[str, Any]) -> dict[str, Any]:
         """Проверяет и сохраняет настройки сканера."""
@@ -541,7 +609,8 @@ def _body(body: bytes | None) -> dict[str, Any]:
 CSP = (
     "default-src 'self'; script-src 'self' 'unsafe-inline'; "
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-    "font-src https://fonts.gstatic.com; connect-src 'self'; img-src 'self' data:; "
+    "font-src https://fonts.gstatic.com; connect-src 'self'; "
+    f"img-src 'self' data: {' '.join('https://' + h for h in feed.IMAGE_HOSTS)}; "
     "frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
 )
 
@@ -589,7 +658,7 @@ def make_handler(app: App, port: int) -> type[BaseHTTPRequestHandler]:
                     response = app.handle(method, url.path, query, body)
             except Exception:
                 log.exception("Ошибка интерфейса: %s %s", method, url.path)
-                response = _json(500, {"error": "Внутренняя ошибка, подробности в консоли"})
+                response = _json(500, {"error": "Внутренняя ошибка, подробности в логе"})
             self._send(response)
 
         def _send(self, response: Response) -> None:
@@ -609,13 +678,19 @@ def make_handler(app: App, port: int) -> type[BaseHTTPRequestHandler]:
 
 
 def serve(app: App, port: int, ready: Callable[[str], None] | None = None) -> None:
-    """Запускает сервер на 127.0.0.1 до Ctrl+C.
+    """Запускает сервер на 127.0.0.1 до Ctrl+C или кнопки «Выключить».
 
     Raises:
         OSError: Если порт занят.
     """
     server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(app, port))
     server.daemon_threads = True
+
+    def quit_app() -> None:
+        # Сначала уходит ответ на запрос, потом сервер останавливается.
+        threading.Timer(0.3, server.shutdown).start()
+
+    app.quit = quit_app
     url = f"http://127.0.0.1:{port}/"
     if ready is not None:
         ready(url)

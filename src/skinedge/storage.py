@@ -120,6 +120,15 @@ CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+-- Картинки предметов для карточек интерфейса; url NULL — картинки не нашлось.
+CREATE TABLE IF NOT EXISTS images (
+    app_id INTEGER NOT NULL,
+    market_hash_name TEXT NOT NULL,
+    url TEXT,
+    fetched_at TEXT NOT NULL,
+    PRIMARY KEY (app_id, market_hash_name)
+);
 """
 
 # Старые цены и продажи прореживаются: после RAW_DAYS остаётся одна запись предмета
@@ -576,6 +585,24 @@ class Storage:
         """Удаляет служебное значение."""
         with self._tx() as c:
             c.execute("DELETE FROM meta WHERE key = ?", (key,))
+
+    def image(self, app_id: int, name: str) -> tuple[str | None, datetime] | None:
+        """Сохранённая картинка предмета и когда её искали; ``None`` — ещё не искали."""
+        row = self.conn.execute(
+            "SELECT url, fetched_at FROM images WHERE app_id = ? AND market_hash_name = ?",
+            (app_id, name),
+        ).fetchone()
+        return None if row is None else (row[0], datetime.fromisoformat(row[1]))
+
+    def save_image(self, app_id: int, name: str, url: str | None, at: datetime) -> None:
+        """Запоминает картинку предмета (``None`` — не нашлась)."""
+        with self._tx() as c:
+            c.execute(
+                "INSERT INTO images (app_id, market_hash_name, url, fetched_at) VALUES (?, ?, ?, ?)"
+                " ON CONFLICT(app_id, market_hash_name) DO UPDATE SET"
+                " url = excluded.url, fetched_at = excluded.fetched_at",
+                (app_id, name, url, at.isoformat()),
+            )
 
     def prune(self, now: datetime) -> dict[str, int]:
         """Прореживает и удаляет старые цены и продажи.
