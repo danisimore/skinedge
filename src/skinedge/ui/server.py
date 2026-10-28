@@ -54,6 +54,7 @@ LABELS = {
     "csfloat": "CSFloat",
     "marketcsgo": "Market.CSGO",
     "lisskins": "Lis-Skins",
+    "whitemarket": "White.market",
     "steam": "Steam",
 }
 FX_KEY = "ui.fx"

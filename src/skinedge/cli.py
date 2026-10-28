@@ -40,6 +40,7 @@ from skinedge.sources.dmarket import DMarketSigner, DMarketSource
 from skinedge.sources.lisskins import LisSkinsSource
 from skinedge.sources.marketcsgo import MarketCSGOSource
 from skinedge.sources.skinport import SkinportSource
+from skinedge.sources.whitemarket import WhiteMarketSource
 from skinedge.storage import Storage
 from skinedge.tuning import load as load_tuning
 from skinedge.ui.control import ScannerControl
@@ -587,6 +588,13 @@ LisSkins = Annotated[
         help="Покупка на Lis-Skins (публичный прайс-лист, ключ не нужен)",
     ),
 ]
+WhiteMarket = Annotated[
+    bool,
+    typer.Option(
+        "--whitemarket/--no-whitemarket",
+        help="Покупка на White.market, только CS2 (публичная выгрузка цен, ключ не нужен)",
+    ),
+]
 Skinport = Annotated[
     bool,
     typer.Option(
@@ -628,13 +636,14 @@ def scan(
     csfloat: CSFloatItems = 40,
     marketcsgo: MarketCSGO = True,
     lisskins: LisSkins = True,
+    whitemarket: WhiteMarket = True,
     skinport: Skinport = False,
     verbose: Verbose = False,
 ) -> None:
     """Ищет выгодные маршруты между DMarket и Market.CSGO.
 
-    Покупка также на Lis-Skins и на CSFloat (только CS2). Skinport — только
-    источник цен, сделки на нём ищутся с ``--skinport``.
+    Покупка также на Lis-Skins, White.market и CSFloat (последние две только CS2).
+    Skinport — только источник цен, сделки на нём ищутся с ``--skinport``.
 
     Только анализ, без сделок.
     """
@@ -674,6 +683,7 @@ def scan(
             csfloat=_csfloat_source(settings) if fetch_first and csfloat > 0 else None,
             marketcsgo=MarketCSGOSource() if fetch_first and marketcsgo else None,
             lisskins=LisSkinsSource() if fetch_first and lisskins else None,
+            whitemarket=WhiteMarketSource() if fetch_first and whitemarket else None,
             telegram=_telegram_target(settings) if notify else None,
             out=typer.echo,
         )
@@ -765,6 +775,7 @@ def run_command(
     csfloat: CSFloatItems = 40,
     marketcsgo: MarketCSGO = True,
     lisskins: LisSkins = True,
+    whitemarket: WhiteMarket = True,
     skinport: Skinport = False,
     verbose: Verbose = False,
 ) -> None:
@@ -818,6 +829,7 @@ def run_command(
             logger,
             marketcsgo=marketcsgo,
             lisskins=lisskins,
+            whitemarket=whitemarket,
         )
     except SetupError as exc:
         logger.error("%s", exc)
@@ -862,6 +874,7 @@ def _make_runner(
     *,
     marketcsgo: bool = True,
     lisskins: bool = True,
+    whitemarket: bool = True,
     stop: threading.Event | None = None,
 ) -> Runner:
     """Сканер по расписанию со всеми площадками и своим соединением с базой.
@@ -884,6 +897,7 @@ def _make_runner(
         csfloat=csfloat,
         marketcsgo=MarketCSGOSource() if marketcsgo else None,
         lisskins=LisSkinsSource() if lisskins else None,
+        whitemarket=WhiteMarketSource() if whitemarket else None,
         telegram=telegram,
         out=logger.info,
     )

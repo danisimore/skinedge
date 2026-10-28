@@ -354,7 +354,7 @@ def test_cli_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         "--skinport",
     ]
     args += ["--limit", "2", "--no-report"]
-    args += ["--no-marketcsgo", "--no-lisskins"]  # без сети
+    args += ["--no-marketcsgo", "--no-lisskins", "--no-whitemarket"]  # без сети
     result = CliRunner().invoke(app, args)
     assert result.exit_code == 0, result.output
     assert "Проход 1: сравнено 1, возможностей 1" in result.output

@@ -52,6 +52,14 @@ marketplaces:
     # Выплата продавцу после 7 дней Trade Protection (steamdb, 02.07.2026).
     # Продажа на Lis-Skins не считается, поэтому правила вывода не заданы.
     settlement_days: 7
+  whitemarket:
+    # White.market: только площадка покупки (продаж в выгрузке нет), только CS2.
+    # Цены в USD. Деньги продавца зачисляются обычно на 8-й день, после 7 дней
+    # Trade Protection (обзор на news.white.market, обновлён 22.07.2026).
+    currency: USD
+    payout: cash
+    transfer_lock_days: 7
+    settlement_days: 8
   steam:
     # Валюта кошелька пользователя; для Финляндии EUR.
     currency: EUR
@@ -450,6 +458,29 @@ rules:
     source: "https://steamdb.com/ru/markets/lis-skins"
     verified_at: 2026-07-02
     note: "Комиссий за пополнение нет (карта, криптовалюта)"
+
+  # ---------- White.market ----------
+  - id: whitemarket.buy
+    marketplace: whitemarket
+    operation: buy
+    kind: percent
+    rate: "0"
+    currency: USD
+    verification: official
+    source: "https://news.white.market/guides/whitemarket-review/"
+    verified_at: 2026-10-28
+    note: "Комиссия покупателя 0%: покупатель платит цену лота"
+
+  - id: whitemarket.deposit.any
+    marketplace: whitemarket
+    operation: deposit
+    kind: percent
+    rate: "0"
+    currency: USD
+    verification: official
+    source: "https://news.white.market/guides/whitemarket-review/"
+    verified_at: 2026-10-28
+    note: "Пополнение без комиссии площадки (криптовалюта); сетевая комиссия блокчейна не учтена"
 
   # ---------- Steam Community Market ----------
   - id: steam.buy
