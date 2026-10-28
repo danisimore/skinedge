@@ -16,7 +16,7 @@ from skinedge.paper import PaperTrade
 from skinedge.pipeline import Pipeline, ScanOptions
 from skinedge.quotes import Quote, QuoteKind, Sale, SalesWindow
 from skinedge.sources.base import SourceError
-from skinedge.sources.marketcsgo import INDEX_SECONDS, MarketCSGOSource
+from skinedge.sources.marketcsgo import INDEX_SECONDS, MarketCSGOSource, item_url
 from skinedge.storage import Storage
 
 NOW = datetime(2026, 10, 27, 9, 0, tzinfo=UTC)
@@ -82,6 +82,19 @@ def test_prices_parsed_in_rubles() -> None:
     first = quotes[0]
     assert first.source == "marketcsgo" and first.currency is Currency.RUB
     assert first.kind is QuoteKind.AGGREGATE and first.app_id == CS2
+    assert quotes[1].url == "https://market.csgo.com/ru/Prisma%20Case"
+
+
+def test_item_links_only_where_checked() -> None:
+    assert item_url(CS2, "StatTrak\u2122 AK-47 | Redline (Field-Tested)") == (
+        "https://market.csgo.com/ru/StatTrak%E2%84%A2%20AK-47%20%7C%20Redline%20%28Field-Tested%29"
+    )
+    assert item_url(CS2, "\u2605 Karambit | Doppler (Factory New)") == (
+        "https://market.csgo.com/ru/%E2%98%85%20Karambit%20%7C%20Doppler%20%28Factory%20New%29"
+    )
+    assert item_url(CS2, "Shadow Case/Box") == "https://market.csgo.com/ru/Shadow%20Case%2FBox"
+    assert item_url(DOTA2, "Inscribed Mantle") is None
+    assert item_url(RUST, "Abyss Boots") is None
 
 
 def test_each_game_has_its_own_site() -> None:
@@ -91,8 +104,9 @@ def test_each_game_has_its_own_site() -> None:
         "https://rust.tm/api/v2/prices/RUB.json": PRICES,
     }
     src = source(routes, seen)
-    assert src.fetch_quotes(DOTA2)[0].app_id == DOTA2
-    assert src.fetch_quotes(RUST)[0].app_id == RUST
+    dota, rust = src.fetch_quotes(DOTA2)[0], src.fetch_quotes(RUST)[0]
+    assert dota.app_id == DOTA2 and rust.app_id == RUST
+    assert dota.url is None and rust.url is None
     assert seen == list(routes)
     with pytest.raises(SourceError, match="440"):
         src.fetch_quotes(440)
@@ -119,6 +133,7 @@ def test_best_prices_mark_items_without_offers() -> None:
         (NAME, Decimal("1961.82"), 372),
         ("Gone", None, 0),
     ]
+    assert quotes[1].url == "https://market.csgo.com/ru/Gone"
 
 
 def test_sales_history_in_rubles_and_index_cached() -> None:
@@ -183,6 +198,7 @@ def tm_quote(name: str, price: str | None, qty: int = 10) -> Quote:
         min_price=None if price is None else Decimal(price),
         quantity=qty,
         fetched_at=NOW,
+        url=item_url(CS2, name),
     )
 
 
@@ -257,6 +273,10 @@ def test_market_csgo_routes() -> None:
     assert x.result.sell_price == Money.of(Decimal("2430.00"), Currency.RUB)
     assert x.sell.basis == "медиана продаж 7д, 6 эпизодов"
     assert x.result.lock_days >= 8
+    # Ссылка на предмет Market.CSGO доходит до карточки и уведомления.
+    assert x.sell_url == "https://market.csgo.com/ru/X"
+    buy = next(o for o in result.found if o.name == NAME and o.result.buy_market == "marketcsgo")
+    assert buy.buy_url == "https://market.csgo.com/ru/AK-47%20%7C%20Redline%20%28Field-Tested%29"
 
     # Через 10 минут история не перечитывается: файлы обновляются раз в час.
     _pipeline(s, tm, out).scan(ScanOptions(limit=2))

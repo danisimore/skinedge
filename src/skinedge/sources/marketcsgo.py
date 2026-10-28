@@ -22,6 +22,15 @@
   ``[unix_time, цена_RUB, цена_USD, цена_EUR]``, свежие продажи первыми; каждая
   проданная штука — отдельная запись, массовые покупки дают одинаковое время.
 
+Страница предмета на CS2 — ``https://market.csgo.com/ru/{название}``, название
+кодируется целиком, как в карте сайта (``/api/sitemap/sitemap{1..5}.xml``).
+Проверено живыми запросами 28.10.2026: адрес без категории отвечает 200 с нужным
+предметом и canonical на тот же предмет с категорией (``/ru/Rifle/AK-47/...``),
+включая StatTrak™ и ★; несуществующее название даёт 404. На market.dota2.net и
+rust.tm адрес ``/item/{название}`` из карты сайта отвечает 404: рабочий адрес
+``/item/{classid}-{instanceid}-{название}/``, а номеров classid и instanceid в
+прайс-листе нет, поэтому ссылок на предметы Dota 2 и Rust нет.
+
 Цены берутся в рублях: валюта аккаунта Market.CSGO выбирается при регистрации,
 у пользователя это рубли. В EUR цены пересчитываются по курсу ЦБ РФ
 (:mod:`skinedge.sources.cbr`).
@@ -38,6 +47,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -55,6 +65,8 @@ log = logging.getLogger(__name__)
 
 HOSTS = {CS2: "https://market.csgo.com", DOTA2: "https://market.dota2.net", RUST: "https://rust.tm"}
 CURRENCY = Currency.RUB
+# Только адреса страниц предмета, проверенные живыми запросами (см. описание модуля).
+ITEM_PAGES = {CS2: "https://market.csgo.com/ru/"}
 # Номера историй меняются только у новых предметов; all.json обновляется редко.
 INDEX_SECONDS = 6 * 3600.0
 _PRICE = 1  # индекс цены в рублях в записи истории (RUB, USD, EUR)
@@ -65,6 +77,12 @@ def _host(app_id: int) -> str:
     if host is None:
         raise SourceError(f"Market.CSGO: игра app_id={app_id} не поддерживается")
     return host
+
+
+def item_url(app_id: int, title: str) -> str | None:
+    """Ссылка на страницу предмета; ``None``, если адрес для игры не проверен."""
+    base = ITEM_PAGES.get(app_id)
+    return f"{base}{quote(title, safe='')}" if base else None
 
 
 class MarketCSGOSource:
@@ -141,6 +159,7 @@ class MarketCSGOSource:
                         min_price=positive_price(row["price"]),
                         quantity=int(row["volume"]),
                         fetched_at=fetched_at,
+                        url=item_url(app_id, name),
                     )
                 )
             except (KeyError, TypeError, ValueError) as exc:
@@ -171,6 +190,7 @@ class MarketCSGOSource:
                 min_price=None,
                 quantity=0,
                 fetched_at=fetched_at,
+                url=item_url(app_id, title),
             )
             for title in dict.fromkeys(titles)
         ]
