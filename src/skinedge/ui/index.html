@@ -533,11 +533,11 @@ function scannerPill(sc) {
   return `<a class="pill off" href="#deals">Сканер остановлен</a>`;
 }
 function renderStatus() {
+  $("#quit").hidden = !S.meta.can_quit;
   const sc = S.scan ?? S.meta.scanner, fx = S.meta.fx;
   const rates = fx ? Object.entries(fx.rates).map(([c, r]) => `${esc(r)} ${esc(c)}`).join(" · ") : "";
   const rate = fx ? `<span class="num">1 EUR = ${rates}</span><span class="muted">${esc(fx.source)}</span>` : `<span class="muted">курсов USD и RUB нет</span>`;
   $("#status").innerHTML = scannerPill(sc) + rate;
-  $("#quit").hidden = !S.meta.can_quit;
 }
 
 /* ---------- сканер ---------- */
@@ -1057,7 +1057,11 @@ async function start() {
     S.scan = await api("GET", "/api/scanner");
     renderScanner(); renderSettings(); renderNewForm();
     await loadJournal();
-  } catch (err) { if (!S.offline) toast(err.error || "Не удалось загрузить данные", true); }
+  } catch (err) {
+    // Выключить приложение должно быть можно, даже если данные не загрузились.
+    $("#quit").hidden = S.meta?.can_quit === false;
+    if (!S.offline) toast(err.error || "Не удалось загрузить данные", true);
+  }
   schedulePoll();
   setInterval(async () => {
     if (S.offline) return;

@@ -260,6 +260,20 @@ def test_page_and_state() -> None:
     assert call(app, "GET", "/nope")[0] == 404
 
 
+def test_page_matches_running_code(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Страница читается при запуске: обновлённый на диске файл не подменит её у старого кода."""
+    from skinedge.ui import server
+
+    app = make_app()
+    first = call(app, "GET", "/")[1]
+
+    def no_reread(package: str) -> None:
+        raise AssertionError("страница читается заново")
+
+    monkeypatch.setattr(server, "files", no_reread)
+    assert call(app, "GET", "/")[1] == first
+
+
 def test_settings_api() -> None:
     app = make_app()
     status, body = call(app, "PUT", "/api/settings", {**settings().model_dump(mode="json")})

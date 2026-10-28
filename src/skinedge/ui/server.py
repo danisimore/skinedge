@@ -232,7 +232,7 @@ class App:
     Args:
         storage: База SkinEdge.
         schedule: Площадки и правила комиссий.
-        rates: Курс USD.
+        rates: Курсы USD и RUB.
         spread: Потери при конвертации валют.
         defaults: Параметры, с которыми сканер работает без настроек из интерфейса.
         control: Сканер этого процесса; ``None`` — запускать сканер отсюда нельзя.
@@ -240,6 +240,8 @@ class App:
 
     Attributes:
         quit: Выключает приложение (задаёт :func:`serve`).
+        page: Страница интерфейса. Читается при запуске: если код обновили, пока
+            приложение работает, страница остаётся парой к работающему коду.
     """
 
     def __init__(
@@ -260,6 +262,7 @@ class App:
         self.control = control
         self.clock = clock
         self.quit: Callable[[], None] | None = None
+        self.page = files("skinedge.ui").joinpath("index.html").read_bytes()
         self._names: list[str] = []
         self._names_at: float | None = None
 
@@ -276,8 +279,7 @@ class App:
 
     def _route(self, method: str, path: str, query: dict[str, str], body: bytes | None) -> Response:
         if method == "GET" and path in ("/", "/index.html"):
-            page = files("skinedge.ui").joinpath("index.html").read_bytes()
-            return Response(200, page, "text/html; charset=utf-8")
+            return Response(200, self.page, "text/html; charset=utf-8")
         if path == "/api/state" and method == "GET":
             return _json(200, self.state())
         if path == "/api/ping" and method == "GET":
