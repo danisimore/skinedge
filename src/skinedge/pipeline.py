@@ -10,7 +10,8 @@
 
 CSFloat отдаёт 200 запросов в час, по одному на предмет, поэтому за проход
 проверяется только часть вселенной (``ScanOptions.csfloat``), по кругу.
-Market.CSGO, Lis-Skins и White.market отдают весь прайс-лист игры одним файлом.
+Market.CSGO, Lis-Skins и White.market отдают весь прайс-лист игры одним файлом,
+CS.Deals — сводкой цен и лотами за последние дни (чтобы отсеять лоты под трейд-локом).
 
 Skinport по умолчанию только источник данных: по его ценам выбирается вселенная,
 по его продажам считается тренд и выбираются предметы для CSFloat. Сделок с
@@ -43,6 +44,7 @@ from skinedge.paper import record as paper_record
 from skinedge.quotes import Quote, SalesStats, SalesWindow
 from skinedge.scanner import Opportunity, ScanConfig, Scanner, stats_from_sales
 from skinedge.sources.base import SourceError
+from skinedge.sources.csdeals import CSDealsSource
 from skinedge.sources.csfloat import CSFloatSource
 from skinedge.sources.dmarket import DMarketSource
 from skinedge.sources.lisskins import LisSkinsSource
@@ -53,9 +55,17 @@ from skinedge.sources.whitemarket import GAMES as WHITEMARKET_GAMES
 from skinedge.sources.whitemarket import WhiteMarketSource
 from skinedge.storage import Storage
 
-MARKETS = ("skinport", "dmarket", "csfloat", "marketcsgo", "lisskins", "whitemarket")
+MARKETS = (
+    "skinport",
+    "dmarket",
+    "csfloat",
+    "marketcsgo",
+    "lisskins",
+    "whitemarket",
+    "csdeals",
+)
 # Маршруты «купить → продать». На CSFloat, Lis-Skins и White.market только покупаем:
-# истории продаж в их API нет.
+# истории продаж в их API нет. На CS.Deals продаж слишком мало, там тоже только покупаем.
 ROUTES = (
     ("skinport", "dmarket"),
     ("dmarket", "skinport"),
@@ -72,6 +82,9 @@ ROUTES = (
     ("whitemarket", "skinport"),
     ("whitemarket", "dmarket"),
     ("whitemarket", "marketcsgo"),
+    ("csdeals", "skinport"),
+    ("csdeals", "dmarket"),
+    ("csdeals", "marketcsgo"),
 )
 SKINPORT = "skinport"
 CSFLOAT_OFFSET = "csfloat.offset"
@@ -179,6 +192,7 @@ class Pipeline:
         marketcsgo: Источник Market.CSGO; ``None`` — Market.CSGO не проверяется.
         lisskins: Источник Lis-Skins; ``None`` — Lis-Skins не проверяется.
         whitemarket: Источник White.market; ``None`` — White.market не проверяется.
+        csdeals: Источник CS.Deals; ``None`` — CS.Deals не проверяется.
         telegram: Клиент Telegram и чат; ``None`` — уведомления не настроены.
         out: Куда писать ход работы (консоль или лог).
         clock: Текущее время (для тестов).
@@ -195,6 +209,7 @@ class Pipeline:
         marketcsgo: MarketCSGOSource | None = None,
         lisskins: LisSkinsSource | None = None,
         whitemarket: WhiteMarketSource | None = None,
+        csdeals: CSDealsSource | None = None,
         telegram: tuple[TelegramClient, str] | None = None,
         out: Callable[[str], None] = print,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
@@ -208,6 +223,7 @@ class Pipeline:
         self.marketcsgo = marketcsgo
         self.lisskins = lisskins
         self.whitemarket = whitemarket
+        self.csdeals = csdeals
         self.telegram = telegram
         self.out = out
         self.clock = clock
@@ -345,13 +361,14 @@ class Pipeline:
         self._fetch_price_list(self.lisskins, "Lis-Skins", dm_names, app_id)
         if app_id in WHITEMARKET_GAMES:  # выгрузка White.market только для CS2
             self._fetch_price_list(self.whitemarket, "White.market", dm_names, app_id)
+        self._fetch_price_list(self.csdeals, "CS.Deals", dm_names, app_id)
         if app_id == CS2:  # CSFloat торгует только CS2
             self._fetch_csfloat(names, sp_sales, opts)
         return schedule
 
     def _fetch_price_list(
         self,
-        source: MarketCSGOSource | LisSkinsSource | WhiteMarketSource | None,
+        source: MarketCSGOSource | LisSkinsSource | WhiteMarketSource | CSDealsSource | None,
         label: str,
         names: list[str],
         app_id: int,

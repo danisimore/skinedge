@@ -35,6 +35,7 @@ from skinedge.runner import MIN_EVERY, AlreadyRunning, Runner, RunOptions
 from skinedge.scanner import Opportunity, ScanConfig
 from skinedge.sources import cbr, ecb
 from skinedge.sources.base import SourceError
+from skinedge.sources.csdeals import CSDealsSource
 from skinedge.sources.csfloat import CSFloatSource
 from skinedge.sources.dmarket import DMarketSigner, DMarketSource
 from skinedge.sources.lisskins import LisSkinsSource
@@ -595,6 +596,14 @@ WhiteMarket = Annotated[
         help="Покупка на White.market, только CS2 (публичная выгрузка цен, ключ не нужен)",
     ),
 ]
+CSDeals = Annotated[
+    bool,
+    typer.Option(
+        "--csdeals/--no-csdeals",
+        help="Покупка на CS.Deals (сводка цен и лоты под трейд-локом, нужен "
+        "SKINEDGE_CSDEALS_KEY в .env)",
+    ),
+]
 Skinport = Annotated[
     bool,
     typer.Option(
@@ -613,6 +622,15 @@ def _csfloat_source(
         say("Нет ключа CSFloat (SKINEDGE_CSFLOAT_KEY в .env): CSFloat не проверяется")
         return None
     return CSFloatSource(settings.csfloat_api_key.get_secret_value())
+
+
+def _csdeals_source(
+    settings: Settings, say: Callable[[str], object] = typer.echo
+) -> CSDealsSource | None:
+    if settings.csdeals_api_key is None:
+        say("Нет ключа CS.Deals (SKINEDGE_CSDEALS_KEY в .env): CS.Deals не проверяется")
+        return None
+    return CSDealsSource(settings.csdeals_api_key.get_secret_value())
 
 
 @app.command()
@@ -637,12 +655,14 @@ def scan(
     marketcsgo: MarketCSGO = True,
     lisskins: LisSkins = True,
     whitemarket: WhiteMarket = True,
+    csdeals: CSDeals = True,
     skinport: Skinport = False,
     verbose: Verbose = False,
 ) -> None:
     """Ищет выгодные маршруты между DMarket и Market.CSGO.
 
-    Покупка также на Lis-Skins, White.market и CSFloat (последние две только CS2).
+    Покупка также на Lis-Skins, White.market, CS.Deals и CSFloat (White.market и
+    CSFloat только CS2).
     Skinport — только источник цен, сделки на нём ищутся с ``--skinport``.
 
     Только анализ, без сделок.
@@ -684,6 +704,7 @@ def scan(
             marketcsgo=MarketCSGOSource() if fetch_first and marketcsgo else None,
             lisskins=LisSkinsSource() if fetch_first and lisskins else None,
             whitemarket=WhiteMarketSource() if fetch_first and whitemarket else None,
+            csdeals=_csdeals_source(settings) if fetch_first and csdeals else None,
             telegram=_telegram_target(settings) if notify else None,
             out=typer.echo,
         )
@@ -776,6 +797,7 @@ def run_command(
     marketcsgo: MarketCSGO = True,
     lisskins: LisSkins = True,
     whitemarket: WhiteMarket = True,
+    csdeals: CSDeals = True,
     skinport: Skinport = False,
     verbose: Verbose = False,
 ) -> None:
@@ -830,6 +852,7 @@ def run_command(
             marketcsgo=marketcsgo,
             lisskins=lisskins,
             whitemarket=whitemarket,
+            csdeals=csdeals,
         )
     except SetupError as exc:
         logger.error("%s", exc)
@@ -875,6 +898,7 @@ def _make_runner(
     marketcsgo: bool = True,
     lisskins: bool = True,
     whitemarket: bool = True,
+    csdeals: bool = True,
     stop: threading.Event | None = None,
 ) -> Runner:
     """Сканер по расписанию со всеми площадками и своим соединением с базой.
@@ -887,6 +911,7 @@ def _make_runner(
     """
     dmarket = _dmarket(settings)
     csfloat = _csfloat_source(settings, logger.info) if opts.csfloat > 0 else None
+    csdeals_source = _csdeals_source(settings, logger.info) if csdeals else None
     storage = Storage(settings.db_path, threads=stop is not None)
     pipeline = Pipeline(
         storage,
@@ -898,6 +923,7 @@ def _make_runner(
         marketcsgo=MarketCSGOSource() if marketcsgo else None,
         lisskins=LisSkinsSource() if lisskins else None,
         whitemarket=WhiteMarketSource() if whitemarket else None,
+        csdeals=csdeals_source,
         telegram=telegram,
         out=logger.info,
     )

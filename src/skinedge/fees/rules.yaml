@@ -60,6 +60,17 @@ marketplaces:
     payout: cash
     transfer_lock_days: 7
     settlement_days: 8
+  csdeals:
+    # CS.Deals: только площадка покупки (лотов и продаж слишком мало, чтобы продавать).
+    # Цены в API — центы USD. Лоты под трейд-локом сканер не берёт.
+    currency: USD
+    payout: cash
+    transfer_lock_days: 7
+    # Продажа на CS.Deals не считается; steamdb: выплата в течение нескольких часов
+    # после Trade Protection. Берём 7 дней, как у остальных площадок.
+    settlement_days: 7
+    # Адреса страниц предметов у CS.Deals нет (сайт-приложение), ссылка ведёт на рынок.
+    item_url: "https://cs.deals/market"
   steam:
     # Валюта кошелька пользователя; для Финляндии EUR.
     currency: EUR
@@ -481,6 +492,29 @@ rules:
     source: "https://news.white.market/guides/whitemarket-review/"
     verified_at: 2026-10-28
     note: "Пополнение без комиссии площадки (криптовалюта); сетевая комиссия блокчейна не учтена"
+
+  # ---------- CS.Deals ----------
+  - id: csdeals.buy
+    marketplace: csdeals
+    operation: buy
+    kind: percent
+    rate: "0"
+    currency: USD
+    verification: official
+    source: "https://cs.deals/fees"
+    verified_at: 2026-10-28
+    note: "Marketplace buying fee 0%. steamdb (01.07.2026) писал 2%, берём официальную страницу"
+
+  - id: csdeals.deposit.any
+    marketplace: csdeals
+    operation: deposit
+    kind: percent
+    rate: "0"
+    currency: USD
+    verification: third_party
+    source: "https://steamdb.com/en/markets/csdeals"
+    verified_at: 2026-07-01
+    note: "Пополнение криптовалютой и скинами без комиссии; на странице fees CS.Deals этого нет. Сетевая комиссия блокчейна не учтена"
 
   # ---------- Steam Community Market ----------
   - id: steam.buy

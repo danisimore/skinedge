@@ -19,6 +19,8 @@ class Settings(BaseSettings):
         fx_spread: Потери при конвертации валют (доля).
         dmarket_withdraw: Способ вывода с DMarket вместо заданного в правилах (visa, sepa...).
         csfloat_api_key: Ключ CSFloat API (после первой сделки на CSFloat).
+        csdeals_api_key: Ключ CS.Deals API (``SKINEDGE_CSDEALS_KEY``). Даёт полный
+            доступ к аккаунту; SkinEdge вызывает с ним только чтение цен.
         dmarket_public_key: Публичный ключ DMarket Trading API.
         dmarket_secret_key: Секретный ключ DMarket Trading API.
         telegram_bot_token: Токен Telegram-бота.
@@ -37,6 +39,9 @@ class Settings(BaseSettings):
     dmarket_withdraw: str | None = None
     csfloat_api_key: SecretStr | None = Field(
         None, validation_alias=AliasChoices("SKINEDGE_CSFLOAT_API_KEY", "SKINEDGE_CSFLOAT_KEY")
+    )
+    csdeals_api_key: SecretStr | None = Field(
+        None, validation_alias=AliasChoices("SKINEDGE_CSDEALS_KEY", "SKINEDGE_CSDEALS_API_KEY")
     )
     dmarket_public_key: str | None = None
     dmarket_secret_key: SecretStr | None = None
