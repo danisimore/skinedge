@@ -36,7 +36,7 @@ from skinedge.fx import FxRates
 from skinedge.games import TITLES
 from skinedge.journal import NoRate, Trade, Valuation, payout_at, tradable_from, valuate
 from skinedge.money import Currency
-from skinedge.pipeline import ScanOptions
+from skinedge.pipeline import SKINPORT, ScanOptions
 from skinedge.runner import HEARTBEAT, LOCK_STALE, PID, AlreadyRunning
 from skinedge.sources.base import SourceError
 from skinedge.storage import Storage
@@ -236,6 +236,8 @@ class App:
         rates: Курсы USD и RUB.
         spread: Потери при конвертации валют.
         defaults: Параметры, с которыми сканер работает без настроек из интерфейса.
+            Если сделки на Skinport в них выключены, Skinport не предлагается в
+            журнале, а его карточки не показываются.
         control: Сканер этого процесса; ``None`` — запускать сканер отсюда нельзя.
         clock: Текущее время UTC.
 
@@ -259,7 +261,9 @@ class App:
         self.schedule = schedule
         self.rates = rates
         self.spread = spread
-        self.defaults = ScanSettings.of(defaults or ScanOptions())
+        opts = defaults or ScanOptions()
+        self.defaults = ScanSettings.of(opts)
+        self.hidden = frozenset() if opts.skinport else frozenset({SKINPORT})
         self.control = control
         self.clock = clock
         self.quit: Callable[[], None] | None = None
@@ -338,6 +342,8 @@ class App:
                     "lock_days": m.transfer_lock_days,
                     "settlement_days": m.settlement_days,
                     "wallet": m.payout is Payout.STEAM_WALLET,
+                    # Не предлагать в журнале; прежние записи с ней показываются как есть.
+                    "hidden": name in self.hidden,
                 }
                 for name, m in self.schedule.marketplaces.items()
             ],
@@ -383,7 +389,7 @@ class App:
 
     def scanner(self) -> dict[str, Any]:
         """Состояние сканера, итог последнего прохода и найденные сделки."""
-        return {**self.scanner_state(), **feed.load(self.storage, self.clock())}
+        return {**self.scanner_state(), **feed.load(self.storage, self.clock(), self.hidden)}
 
     def start_scanner(self, force: bool) -> Response:
         """Запускает сканер; 409, если с этой базой уже работает другой запуск."""

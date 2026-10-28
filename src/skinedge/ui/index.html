@@ -776,7 +776,8 @@ const plural = (n, one, few, many) => { const m10 = n % 10, m100 = n % 100; retu
 
 /* ---------- поля сделки ---------- */
 function marketOptions(selected, empty) {
-  const opts = S.meta.markets.map((m) => `<option value="${m.id}"${m.id === selected ? " selected" : ""}>${esc(m.label)} · ${m.currency}</option>`).join("");
+  // Скрытая площадка (Skinport, пока сделки на нём выключены) остаётся только у прежних записей.
+  const opts = S.meta.markets.filter((m) => !m.hidden || m.id === selected).map((m) => `<option value="${m.id}"${m.id === selected ? " selected" : ""}>${esc(m.label)} · ${m.currency}</option>`).join("");
   return (empty ? `<option value="">${empty}</option>` : "") + opts;
 }
 function field(p, name, lbl, input, extra = "") {

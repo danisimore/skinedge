@@ -86,6 +86,31 @@ def test_deals_keep_first_seen_and_other_games() -> None:
     assert feed.load(s, later)["deals"] == []
 
 
+def test_skinport_deals_hidden_until_enabled() -> None:
+    s = Storage(":memory:")
+    feed.update_deals(s, START, (730,), found(), None, START)  # DMarket → Skinport
+    assert feed.load(s, START, hidden={"skinport"})["deals"] == []
+    assert len(feed.load(s, START)["deals"]) == 1
+
+    def ui(opts: ScanOptions) -> App:
+        return App(
+            s, SCHEDULE, Rates(FakeEcb(), s, lambda: START), SPREAD, opts, clock=lambda: START
+        )
+
+    # По умолчанию сделки на Skinport выключены: карточки уже найденных сделок
+    # уходят сразу, а в журнале Skinport не предлагается.
+    plain = ui(ScanOptions())
+    assert call(plain, "GET", "/api/scanner")[1]["deals"] == []
+    markets = {m["id"]: m for m in call(plain, "GET", "/api/state")[1]["markets"]}
+    assert markets["skinport"]["hidden"] is True and markets["dmarket"]["hidden"] is False
+    assert not any(m["hidden"] for m in markets.values() if m["id"] != "skinport")
+
+    with_skinport = ui(ScanOptions(skinport=True))
+    assert len(call(with_skinport, "GET", "/api/scanner")[1]["deals"]) == 1
+    markets = call(with_skinport, "GET", "/api/state")[1]["markets"]
+    assert not any(m["hidden"] for m in markets)
+
+
 def test_old_deals_hidden() -> None:
     s = Storage(":memory:")
     feed.update_deals(s, START, (730,), found(), None, START)

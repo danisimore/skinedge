@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Collection, Iterable
 from datetime import datetime, timedelta
 from typing import Any
 from urllib.parse import urlsplit
@@ -181,11 +181,20 @@ def _attach_images(
         deal["image"] = url
 
 
-def load(storage: Storage, now: datetime) -> dict[str, Any]:
-    """Итог последнего прохода и сделки не старше :data:`MAX_AGE`, лучшие первыми."""
+def load(storage: Storage, now: datetime, hidden: Collection[str] = ()) -> dict[str, Any]:
+    """Итог последнего прохода и сделки не старше :data:`MAX_AGE`, лучшие первыми.
+
+    Args:
+        storage: База.
+        now: Текущее время UTC.
+        hidden: Площадки, сделки через которые не показываются (Skinport, пока
+            сделки на нём выключены): найденные раньше карточки уходят сразу.
+    """
     summary = _load_json(storage, PASS_KEY)
     deals = []
     for d in _stored_deals(storage):
+        if d.get("buy_market") in hidden or d.get("sell_market") in hidden:
+            continue
         try:
             found_at = datetime.fromisoformat(str(d.get("found_at")))
         except ValueError:
