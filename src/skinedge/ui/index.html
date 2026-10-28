@@ -1,0 +1,655 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SkinEdge</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Rubik:wght@500;600&display=swap">
+<style>
+/* Раскладка: «торговый журнал» — шапка со статусом сканера, вкладки, сводка из четырёх
+   плиток, форма покупки и таблица сделок. Акцент — синий Mil-Spec из шкалы редкости CS2. */
+:root {
+  --bg: #f2f4f9;
+  --surface: #ffffff;
+  --surface-2: #f7f8fc;
+  --ink: #141a2e;
+  --ink-2: #474f6b;
+  --muted: #737a95;
+  --line: #dde1ec;
+  --line-strong: #c5cbdc;
+  --accent: #3550e0;
+  --accent-ink: #ffffff;
+  --accent-soft: #e8ecff;
+  --good: #0b7a3b;
+  --good-soft: #e3f4ea;
+  --bad: #c0352f;
+  --bad-soft: #fbe9e8;
+  --warn: #8a5a00;
+  --warn-soft: #fbf0d9;
+  --shadow: 0 1px 2px rgba(20, 26, 46, 0.06), 0 8px 24px rgba(20, 26, 46, 0.06);
+  --font-display: "Rubik", "Segoe UI", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-data: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --radius: 10px;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d111d; --surface: #151a2a; --surface-2: #1a2034; --ink: #e8ebf6; --ink-2: #b3bad2;
+    --muted: #7f87a6; --line: #262d45; --line-strong: #353d5a; --accent: #8096ff; --accent-ink: #0d111d;
+    --accent-soft: #1f2753; --good: #4fd08a; --good-soft: #12301f; --bad: #ff8a80; --bad-soft: #3a1717;
+    --warn: #f0b74e; --warn-soft: #33270f; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.25);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d111d; --surface: #151a2a; --surface-2: #1a2034; --ink: #e8ebf6; --ink-2: #b3bad2;
+  --muted: #7f87a6; --line: #262d45; --line-strong: #353d5a; --accent: #8096ff; --accent-ink: #0d111d;
+  --accent-soft: #1f2753; --good: #4fd08a; --good-soft: #12301f; --bad: #ff8a80; --bad-soft: #3a1717;
+  --warn: #f0b74e; --warn-soft: #33270f; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.25);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.5 var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+.wrap {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+h1, h2, h3 { font-family: var(--font-display); font-weight: 600; margin: 0; text-wrap: balance; }
+h2 { font-size: 1.25rem; letter-spacing: -0.01em; }
+h3 { font-size: 1rem; }
+.num { font-family: var(--font-data); font-variant-numeric: tabular-nums; }
+.muted { color: var(--muted); }
+.small { font-size: 0.85rem; }
+a { color: var(--accent); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+/* ---------- шапка ---------- */
+.top {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+body::before {
+  content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px);
+  z-index: 10; background: var(--surface);
+}
+.top .wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; padding-block: 12px; }
+.brand { display: flex; align-items: baseline; gap: 10px; }
+.brand h1 { font-size: 1.35rem; letter-spacing: -0.02em; }
+.brand h1 span { color: var(--accent); }
+.brand .tag { font-size: 0.8rem; color: var(--muted); }
+.status { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin-left: auto; font-size: 0.85rem; color: var(--ink-2); }
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; font-size: 0.8rem; font-weight: 500; white-space: nowrap; }
+.pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.pill.ok { color: var(--good); background: var(--good-soft); }
+.pill.off { color: var(--bad); background: var(--bad-soft); }
+.tabs { display: flex; gap: 4px; width: 100%; margin-bottom: -13px; }
+.tabs a {
+  padding: 8px 14px; text-decoration: none; color: var(--ink-2); font-weight: 500;
+  border-bottom: 2px solid transparent;
+}
+.tabs a[aria-current="page"] { color: var(--ink); border-color: var(--accent); }
+.tabs a:hover { color: var(--ink); }
+
+main .wrap { display: grid; gap: 24px; padding-block: 24px 48px; }
+main .wrap > * { min-width: 0; }
+
+/* ---------- сводка ---------- */
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.kpi { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; display: grid; gap: 4px; align-content: start; }
+.kpi .label { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 500; }
+.kpi .value { font-family: var(--font-display); font-size: 1.7rem; font-weight: 600; letter-spacing: -0.02em; line-height: 1.2; }
+.kpi .value small { font-size: 0.9rem; font-weight: 500; color: var(--muted); margin-left: 4px; }
+.kpi .sub { font-size: 0.85rem; color: var(--ink-2); }
+.pos { color: var(--good); }
+.neg { color: var(--bad); }
+.note { font-size: 0.85rem; color: var(--warn); background: var(--warn-soft); border-radius: 8px; padding: 8px 12px; }
+
+/* ---------- панели и формы ---------- */
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+.panel > header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 16px; padding: 16px 20px 0; }
+.panel > .body { padding: 16px 20px 20px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px 16px; }
+.grid .wide { grid-column: span 2; }
+fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+legend { font-family: var(--font-display); font-weight: 600; padding: 0; margin-bottom: 10px; }
+.field { display: grid; gap: 5px; min-width: 0; align-content: start; }
+.field label { font-size: 0.82rem; font-weight: 500; color: var(--ink-2); }
+.field .help { font-size: 0.8rem; color: var(--muted); }
+.field .err { font-size: 0.8rem; color: var(--bad); }
+.field .err:empty { display: none; }
+input, select, textarea {
+  font: inherit; color: var(--ink); background: var(--surface-2);
+  border: 1px solid var(--line-strong); border-radius: 8px; padding: 8px 10px; width: 100%; min-width: 0;
+}
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: transparent; }
+.invalid input, .invalid select { border-color: var(--bad); }
+textarea { resize: vertical; min-height: 40px; }
+.money { position: relative; }
+.money input { padding-right: 52px; font-family: var(--font-data); }
+.money .cur { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-family: var(--font-data); font-size: 0.8rem; color: var(--muted); pointer-events: none; }
+.hint { font-size: 0.8rem; color: var(--ink-2); display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+.hint:empty { display: none; }
+.linkbtn { background: none; border: 0; padding: 0; font: inherit; color: var(--accent); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 18px; }
+button.btn {
+  font: inherit; font-weight: 600; border-radius: 8px; padding: 9px 16px; cursor: pointer;
+  border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink);
+}
+button.btn:hover { border-color: var(--ink-2); }
+button.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+button.btn.primary:hover { filter: brightness(1.08); }
+button.btn.danger { color: var(--bad); }
+button.btn.small { padding: 5px 10px; font-size: 0.85rem; }
+button:disabled { opacity: 0.6; cursor: progress; }
+
+/* ---------- таблица сделок ---------- */
+.ledger-wrap { overflow-x: auto; }
+table.ledger { width: 100%; border-collapse: collapse; min-width: 760px; }
+.ledger th { text-align: left; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 500; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.ledger td { padding: 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.ledger th.r, .ledger td.r { text-align: right; }
+.ledger tr.row { cursor: pointer; }
+.ledger tr.row:hover td { background: var(--surface-2); }
+.ledger tr.row.open td { background: var(--surface-2); border-bottom-color: transparent; }
+.item-name { font-weight: 600; }
+.game { display: inline-block; font-size: 0.72rem; font-weight: 600; letter-spacing: 0.04em; color: var(--accent); background: var(--accent-soft); border-radius: 4px; padding: 1px 6px; margin-right: 6px; }
+.sub-line { font-size: 0.82rem; color: var(--muted); }
+.chip { display: inline-flex; align-items: center; gap: 5px; font-size: 0.78rem; font-weight: 500; border-radius: 6px; padding: 2px 8px; white-space: nowrap; }
+.chip svg { width: 12px; height: 12px; flex: none; }
+.chip.locked { color: var(--ink-2); background: var(--surface-2); border: 1px solid var(--line); }
+.chip.tradable { color: var(--good); background: var(--good-soft); }
+.chip.sold { color: var(--accent); background: var(--accent-soft); }
+.chip.warn { color: var(--warn); background: var(--warn-soft); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.profit { font-family: var(--font-data); font-variant-numeric: tabular-nums; font-weight: 500; white-space: nowrap; }
+.detail td { background: var(--surface-2); padding: 4px 12px 18px; }
+.detail-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 16px 28px; }
+.calc { display: grid; gap: 2px; font-size: 0.85rem; }
+.calc div { display: flex; justify-content: space-between; gap: 12px; }
+.calc .total { border-top: 1px solid var(--line); margin-top: 6px; padding-top: 6px; font-weight: 600; }
+.calc span:last-child { font-family: var(--font-data); white-space: nowrap; }
+ul.warnings { margin: 8px 0 0; padding-left: 18px; font-size: 0.82rem; color: var(--warn); }
+.empty { padding: 36px 20px; text-align: center; color: var(--ink-2); display: grid; gap: 6px; justify-items: center; }
+.empty strong { font-family: var(--font-display); font-size: 1.05rem; color: var(--ink); }
+.filters { display: flex; gap: 6px; flex-wrap: wrap; }
+.filters button { font: inherit; font-size: 0.85rem; padding: 4px 12px; border-radius: 999px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink-2); cursor: pointer; }
+.filters button[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: var(--surface); }
+
+/* ---------- настройки ---------- */
+.settings { display: grid; gap: 22px; max-width: 760px; }
+.state-line { font-size: 0.88rem; color: var(--ink-2); }
+.state-line strong { color: var(--ink); }
+
+/* ---------- диалог и уведомления ---------- */
+dialog { border: 0; border-radius: 14px; padding: 0; width: min(720px, calc(100vw - 32px)); background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
+dialog::backdrop { background: rgba(10, 14, 28, 0.45); }
+dialog header { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 18px 20px 0; }
+dialog .body { padding: 16px 20px 20px; display: grid; gap: 20px; }
+.toast { position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--ink); color: var(--surface); padding: 10px 16px; border-radius: 8px; font-size: 0.9rem; box-shadow: var(--shadow); z-index: 20; max-width: calc(100vw - 32px); }
+.toast.bad { background: var(--bad); color: #fff; }
+
+@media (max-width: 860px) {
+  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .detail-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 480px) {
+  .kpis { grid-template-columns: minmax(0, 1fr); }
+  .grid .wide { grid-column: auto; }
+  .status { margin-left: 0; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .toast { animation: rise 0.18s ease-out; }
+  @keyframes rise { from { transform: translate(-50%, 8px); opacity: 0; } }
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <div class="brand"><h1>Skin<span>Edge</span></h1><span class="tag">только анализ, сделки совершаешь ты</span></div>
+    <div class="status" id="status"><span class="muted">Загружаю…</span></div>
+    <nav class="tabs" aria-label="Разделы">
+      <a href="#journal" id="tab-journal">Журнал сделок</a>
+      <a href="#scanner" id="tab-scanner">Настройки сканера</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="wrap" id="view-journal">
+    <section class="kpis" id="kpis" aria-label="Сводка"></section>
+    <div id="kpi-note" hidden class="note"></div>
+
+    <section class="panel" aria-labelledby="new-title">
+      <header><h2 id="new-title">Новая покупка</h2><span class="muted small">Цены в валюте площадки. Прибыль считается в EUR с комиссиями из правил сканера.</span></header>
+      <form class="body" id="new-form" novalidate></form>
+    </section>
+
+    <section class="panel" aria-labelledby="ledger-title">
+      <header>
+        <h2 id="ledger-title">Сделки</h2>
+        <div class="filters" role="group" aria-label="Показать">
+          <button type="button" data-filter="all" aria-pressed="true">Все</button>
+          <button type="button" data-filter="open" aria-pressed="false">Открытые</button>
+          <button type="button" data-filter="sold" aria-pressed="false">Проданные</button>
+        </div>
+      </header>
+      <div class="body" id="ledger"></div>
+    </section>
+  </div>
+
+  <div class="wrap" id="view-scanner" hidden>
+    <section class="panel" aria-labelledby="set-title">
+      <header><h2 id="set-title">Что искать</h2><span class="state-line" id="set-state"></span></header>
+      <form class="body settings" id="set-form" novalidate>
+        <fieldset>
+          <legend>Цена предмета</legend>
+          <div class="grid">
+            <div class="field" data-f="min_price"><label for="s-min_price">Цена от, EUR</label><input id="s-min_price" name="min_price" inputmode="decimal"><span class="err"></span></div>
+            <div class="field" data-f="max_price"><label for="s-max_price">Цена до, EUR</label><input id="s-max_price" name="max_price" inputmode="decimal"><span class="err"></span></div>
+            <div class="field" data-f="limit"><label for="s-limit">Предметов на игру</label><input id="s-limit" name="limit" inputmode="numeric"><span class="help">Самые ликвидные на Skinport в этом диапазоне цен</span><span class="err"></span></div>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>Продаваемость</legend>
+          <div class="grid">
+            <div class="field" data-f="min_sales_7d"><label for="s-min_sales_7d">Продаж за 7 дней, от</label><input id="s-min_sales_7d" name="min_sales_7d" inputmode="numeric"><span class="help">На площадке, где продавать. У DMarket и Market.CSGO массовая покупка считается одной продажей</span><span class="err"></span></div>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>Когда присылать сигнал</legend>
+          <div class="grid">
+            <div class="field" data-f="min_profit"><label for="s-min_profit">Чистая прибыль от, EUR</label><input id="s-min_profit" name="min_profit" inputmode="decimal"><span class="err"></span></div>
+            <div class="field" data-f="min_roi"><label for="s-min_roi">ROI от, %</label><input id="s-min_roi" name="min_roi" inputmode="decimal"><span class="err"></span></div>
+          </div>
+        </fieldset>
+        <p class="muted small" style="margin:0">Сканер перечитывает настройки в начале каждого прохода, перезапуск не нужен. Виртуальные сделки всегда записываются по стандартным порогам (ROI от 5%, прибыль от 0,50 EUR), чтобы их итоги можно было сравнивать.</p>
+        <div class="actions" style="margin-top:0">
+          <button type="submit" class="btn primary" id="set-save">Сохранить</button>
+          <button type="button" class="btn" id="set-reset">Вернуть стандартные</button>
+        </div>
+      </form>
+    </section>
+  </div>
+</main>
+
+<dialog id="dlg" aria-labelledby="dlg-title">
+  <form method="dialog" id="dlg-form" novalidate>
+    <header><h2 id="dlg-title">Сделка</h2><button type="button" class="btn small" id="dlg-close">Закрыть</button></header>
+    <div class="body" id="dlg-body"></div>
+  </form>
+</dialog>
+<datalist id="names"></datalist>
+<div id="toast" class="toast" hidden role="status" aria-live="polite"></div>
+
+<script>
+"use strict";
+const S = { meta: null, trades: [], summary: null, filter: "all", openRow: null };
+const $ = (sel, root = document) => root.querySelector(sel);
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const fmt2 = new Intl.NumberFormat("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtPrice = new Intl.NumberFormat("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 3 });
+const money = (v, cur) => (v == null ? "—" : `${fmtPrice.format(Number(v))} ${cur}`);
+const signed = (v) => { const n = Number(v); const s = fmt2.format(Math.abs(n)); return n > 0 ? `+${s}` : n < 0 ? `−${s}` : s; };
+const tone = (v) => (Number(v) > 0 ? "pos" : Number(v) < 0 ? "neg" : "");
+const pct = (v) => (v == null ? "—" : `${signed(Number(v) * 100)}%`);
+const dmy = (iso) => { if (!iso) return "—"; const [y, m, d] = iso.slice(0, 10).split("-"); return `${d}.${m}.${y.slice(2)}`; };
+const hm = (iso) => new Date(iso).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+const today = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
+const market = (id) => S.meta.markets.find((m) => m.id === id);
+const label = (id) => market(id)?.label ?? id;
+const ICON = {
+  lock: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></svg>',
+  check: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 8.5l3.2 3L13 4.5"/></svg>',
+  coin: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v6M6.3 6.6h2.9a1.2 1.2 0 0 1 0 2.4H6.8"/></svg>',
+};
+
+async function api(method, path, body) {
+  const opts = { method, headers: { "X-SkinEdge": "1" } };
+  if (body !== undefined) { opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
+  let res;
+  try { res = await fetch(path, opts); } catch { throw { error: "Интерфейс не отвечает. Окно skinedge ui закрыто?" }; }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw { error: data.error || `Ошибка ${res.status}`, fields: data.fields || {} };
+  return data;
+}
+
+let toastTimer;
+function toast(text, bad = false) {
+  const t = $("#toast");
+  t.textContent = text; t.className = bad ? "toast bad" : "toast"; t.hidden = false;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.hidden = true), bad ? 6000 : 3000);
+}
+
+function showErrors(form, err) {
+  form.querySelectorAll(".field").forEach((f) => { f.classList.remove("invalid"); const e = $(".err", f); if (e) e.textContent = ""; });
+  const fields = err.fields || {};
+  for (const [name, msg] of Object.entries(fields)) {
+    const f = form.querySelector(`[data-f="${name}"]`);
+    if (f) { f.classList.add("invalid"); $(".err", f).textContent = msg; }
+  }
+  toast(err.error || "Не получилось", true);
+}
+
+/* ---------- шапка ---------- */
+function renderStatus() {
+  const { scanner, fx } = S.meta;
+  const beat = scanner.heartbeat ? `отметка ${hm(scanner.heartbeat)}` : "ещё не запускался";
+  const pill = scanner.running
+    ? `<span class="pill ok">Сканер работает</span><span>${beat}</span>`
+    : `<span class="pill off">Сканер не запущен</span><span>${beat}</span>`;
+  const rate = fx ? `<span class="num">1 EUR = ${esc(fx.usd_per_eur)} USD</span><span class="muted">${esc(fx.source)}</span>` : `<span class="muted">курса USD нет</span>`;
+  $("#status").innerHTML = pill + rate;
+}
+
+/* ---------- сводка ---------- */
+function renderKpis() {
+  const s = S.summary;
+  const tile = (lbl, value, sub, cls = "") =>
+    `<div class="kpi"><span class="label">${lbl}</span><span class="value ${cls}">${value}</span><span class="sub">${sub}</span></div>`;
+  const roi = s.realized_roi == null ? "" : ` · ROI ${pct(s.realized_roi)}`;
+  const wallet = s.wallet_profit == null ? "" : ` · ещё ${signed(s.wallet_profit)} в Steam Wallet`;
+  $("#kpis").innerHTML = [
+    tile("Прибыль по проданным", `${signed(s.realized_profit)}<small>EUR</small>`, `${s.sold} ${plural(s.sold, "сделка", "сделки", "сделок")}${roi}${wallet}`, tone(s.realized_profit)),
+    tile("Вложено в открытые", `${fmt2.format(Number(s.open_cost))}<small>EUR</small>`, `${s.open} ${plural(s.open, "предмет", "предмета", "предметов")} на руках`),
+    tile("Ожидаемая прибыль", `${signed(s.open_profit)}<small>EUR</small>`, "открытых, по текущим ценам", tone(s.open_profit)),
+    tile("Всего сделок", `${s.sold + s.open}`, s.sold + s.open ? `продано ${s.sold}, держишь ${s.open}` : "журнал пока пуст"),
+  ].join("");
+  const notes = [];
+  if (s.not_counted) notes.push(`${s.not_counted} ${plural(s.not_counted, "сделка не посчитана", "сделки не посчитаны", "сделок не посчитано")}: подробности в строке сделки.`);
+  if (s.incomplete) notes.push(`В ${s.incomplete} ${plural(s.incomplete, "сделке", "сделках", "сделках")} не все комиссии известны: прибыль может быть меньше.`);
+  $("#kpi-note").hidden = !notes.length;
+  $("#kpi-note").textContent = notes.join(" ");
+}
+const plural = (n, one, few, many) => { const m10 = n % 10, m100 = n % 100; return m10 === 1 && m100 !== 11 ? one : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? few : many; };
+
+/* ---------- поля сделки ---------- */
+function marketOptions(selected, empty) {
+  const opts = S.meta.markets.map((m) => `<option value="${m.id}"${m.id === selected ? " selected" : ""}>${esc(m.label)} · ${m.currency}</option>`).join("");
+  return (empty ? `<option value="">${empty}</option>` : "") + opts;
+}
+function field(p, name, lbl, input, extra = "") {
+  return `<div class="field" data-f="${name}"><label for="${p}-${name}">${lbl}</label>${input}${extra}<span class="err"></span></div>`;
+}
+function moneyInput(p, name, value, mkt) {
+  return `<div class="money"><input id="${p}-${name}" name="${name}" inputmode="decimal" autocomplete="off" value="${esc(value ?? "")}"><span class="cur" data-cur-for="${p}-${mkt}"></span></div>`;
+}
+function tradeFields(p, t = {}, withSale = false) {
+  const games = S.meta.games.map((g) => `<option value="${g.app_id}"${g.app_id === (t.app_id ?? 730) ? " selected" : ""}>${esc(g.title)}</option>`).join("");
+  const buy = `
+    <div class="grid">
+      ${field(p, "app_id", "Игра", `<select id="${p}-app_id" name="app_id">${games}</select>`)}
+      <div class="wide">${field(p, "name", "Предмет", `<input id="${p}-name" name="name" list="names" autocomplete="off" placeholder="AK-47 | Redline (Field-Tested)" value="${esc(t.name ?? "")}">`, `<span class="help">Точное название, как на площадке</span>`)}</div>
+      ${field(p, "bought_at", "Дата покупки", `<input id="${p}-bought_at" name="bought_at" type="date" value="${esc(t.bought_at ?? today())}">`)}
+      ${field(p, "buy_market", "Где куплен", `<select id="${p}-buy_market" name="buy_market">${marketOptions(t.buy_market, "Выбери площадку")}</select>`)}
+      ${field(p, "buy_price", "Цена покупки", moneyInput(p, "buy_price", t.buy_price, "buy_market"))}
+      ${field(p, "target_market", "Где собираюсь продать", `<select id="${p}-target_market" name="target_market">${marketOptions(t.target_market, "Выбери площадку")}</select>`)}
+      ${field(p, "target_price", "Сколько там стоит сейчас", moneyInput(p, "target_price", t.target_price, "target_market"), `<span class="hint" id="${p}-hint"></span>`)}
+      <div class="wide">${field(p, "note", "Заметка", `<input id="${p}-note" name="note" autocomplete="off" placeholder="Float 0.15, наклейки, откуда сигнал" value="${esc(t.note ?? "")}">`)}</div>
+    </div>`;
+  if (!withSale) return buy;
+  return `<fieldset><legend>Покупка</legend>${buy}</fieldset>
+    <fieldset><legend>Продажа</legend>
+      <div class="grid">
+        ${field(p, "sold_at", "Дата продажи", `<input id="${p}-sold_at" name="sold_at" type="date" value="${esc(t.sold_at ?? "")}">`)}
+        ${field(p, "sell_market", "Где продан", `<select id="${p}-sell_market" name="sell_market">${marketOptions(t.sell_market, "Ещё не продан")}</select>`)}
+        ${field(p, "sell_price", "Цена продажи", moneyInput(p, "sell_price", t.sell_price, "sell_market"))}
+      </div>
+      <p class="muted small" style="margin:10px 0 0">Цена продажи — сколько стоил лот, до комиссии площадки. Комиссию и вывод денег SkinEdge вычтет сам.</p>
+    </fieldset>`;
+}
+function readTrade(form) {
+  const data = Object.fromEntries(new FormData(form).entries());
+  data.app_id = Number(data.app_id);
+  return data;
+}
+function wireTradeForm(form, p) {
+  const sync = () => form.querySelectorAll("[data-cur-for]").forEach((el) => {
+    const sel = $("#" + el.dataset.curFor); el.textContent = sel ? market(sel.value)?.currency ?? "" : "";
+  });
+  form.addEventListener("change", (e) => { sync(); if (["name", "target_market"].includes(e.target.name)) hintQuote(form, p); });
+  const name = $(`#${p}-name`, form);
+  let timer;
+  name.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(() => suggest(name.value), 200); });
+  sync();
+  hintQuote(form, p);
+}
+async function suggest(q) {
+  if (q.trim().length < 2) return;
+  try {
+    const { names } = await api("GET", `/api/names?q=${encodeURIComponent(q)}`);
+    $("#names").innerHTML = names.map((n) => `<option value="${esc(n)}"></option>`).join("");
+  } catch { /* подсказки необязательны */ }
+}
+async function hintQuote(form, p) {
+  const hint = $(`#${p}-hint`, form);
+  if (!hint) return;
+  const name = $(`#${p}-name`, form).value.trim();
+  const mkt = $(`#${p}-target_market`, form).value;
+  hint.innerHTML = "";
+  if (!name || !mkt) return;
+  try {
+    const { quote } = await api("GET", `/api/quote?name=${encodeURIComponent(name)}&market=${encodeURIComponent(mkt)}`);
+    if (!quote) { hint.innerHTML = `<span class="muted">Сканер этот предмет на ${esc(label(mkt))} не видел</span>`; return; }
+    hint.innerHTML = `<span>Сканер видел лот от <span class="num">${money(quote.price, quote.currency)}</span>, ${dmy(quote.fetched_at)} ${hm(quote.fetched_at)}</span><button type="button" class="linkbtn">Подставить</button>`;
+    $("button", hint).addEventListener("click", () => { $(`#${p}-target_price`, form).value = quote.price; });
+  } catch { /* подсказка необязательна */ }
+}
+
+/* ---------- новая покупка ---------- */
+function renderNewForm() {
+  const form = $("#new-form");
+  form.innerHTML = tradeFields("n") + `<div class="actions"><button type="submit" class="btn primary">Добавить в журнал</button><span class="muted small">Курс USD запишется на сегодня.</span></div>`;
+  wireTradeForm(form, "n");
+}
+$("#new-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const form = e.currentTarget, btn = $("button[type=submit]", form);
+  btn.disabled = true;
+  try {
+    const t = await api("POST", "/api/trades", readTrade(form));
+    toast(`Добавлено: ${t.name}`);
+    S.openRow = t.id;
+    renderNewForm();
+    await loadJournal();
+  } catch (err) { showErrors(form, err); } finally { btn.disabled = false; }
+});
+
+/* ---------- таблица ---------- */
+function statusChip(t) {
+  if (t.status === "sold") return `<span class="chip sold">${ICON.coin}Продано ${dmy(t.sold_at)}</span>`;
+  if (t.status === "locked") return `<span class="chip locked">${ICON.lock}Защита до ${dmy(t.tradable_from)}</span>`;
+  return `<span class="chip tradable">${ICON.check}Можно продавать</span>`;
+}
+function profitCell(t) {
+  const v = t.valuation;
+  if (!v) return `<span class="chip warn">не посчитано</span>`;
+  const kind = t.status === "sold" ? "итог" : "ожидаемая";
+  return `<div class="profit ${tone(v.profit)}">${signed(v.profit)} EUR</div><div class="sub-line">${kind} · ROI ${pct(v.roi)}</div>`;
+}
+function renderLedger() {
+  const box = $("#ledger");
+  const rows = S.trades.filter((t) => S.filter === "all" || (S.filter === "sold" ? t.status === "sold" : t.status !== "sold"));
+  if (!S.trades.length) {
+    box.innerHTML = `<div class="empty"><strong>Сделок пока нет</strong><span>Купил предмет по сигналу? Внеси его в форму выше: где купил, за сколько и где собираешься продать.</span><span class="muted small">Когда продашь, открой сделку и запиши продажу — SkinEdge посчитает прибыль с комиссиями.</span></div>`;
+    return;
+  }
+  if (!rows.length) { box.innerHTML = `<div class="empty"><span>В этом фильтре сделок нет.</span></div>`; return; }
+  const head = `<thead><tr><th>Предмет</th><th>Покупка</th><th>Продажа</th><th class="r">Прибыль</th><th>Статус</th></tr></thead>`;
+  const body = rows.map((t) => {
+    const v = t.valuation;
+    const sell = t.status === "sold"
+      ? `<div class="num">${money(t.sell_price, t.sell_currency)}</div><div class="sub-line">${esc(label(t.sell_market))}</div>`
+      : `<div class="num">${money(t.target_price, t.target_currency)}</div><div class="sub-line">${esc(label(t.target_market))}, цена на ${dmy(t.target_at)}</div>`;
+    const flags = [];
+    if (v && !v.complete) flags.push(`<span class="chip warn">неполный расчёт</span>`);
+    if (v && v.wallet) flags.push(`<span class="chip warn">Steam Wallet</span>`);
+    const open = S.openRow === t.id;
+    const main = `<tr class="row${open ? " open" : ""}" data-id="${t.id}" tabindex="0" aria-expanded="${open}">
+      <td><div class="item-name"><span class="game">${esc(t.game)}</span>${esc(t.name)}</div><div class="sub-line">куплен ${dmy(t.bought_at)}${t.note ? " · " + esc(t.note) : ""}</div></td>
+      <td><div class="num">${money(t.buy_price, t.buy_currency)}</div><div class="sub-line">${esc(label(t.buy_market))}</div></td>
+      <td>${sell}</td>
+      <td class="r">${profitCell(t)}</td>
+      <td><div class="chips">${statusChip(t)}${flags.join("")}</div></td>
+    </tr>`;
+    return open ? main + detailRow(t) : main;
+  }).join("");
+  box.innerHTML = `<div class="ledger-wrap"><table class="ledger">${head}<tbody>${body}</tbody></table></div>`;
+}
+function detailRow(t) {
+  const v = t.valuation;
+  let calc;
+  if (v) {
+    const lines = v.lines.map((l) => { const i = l.lastIndexOf(": "); return `<div><span>${esc(l.slice(0, i))}</span><span>${esc(l.slice(i + 2))}</span></div>`; }).join("");
+    calc = `<div class="calc">
+      <div><span>Стоимость покупки</span><span>${fmt2.format(Number(v.cost))} EUR</span></div>
+      <div><span>Выручка после комиссий${t.status === "sold" ? "" : " (если продать сейчас)"}</span><span>${fmt2.format(Number(v.proceeds))} EUR</span></div>
+      <div class="total ${tone(v.profit)}"><span>Прибыль</span><span>${signed(v.profit)} EUR</span></div>
+      <div class="muted small" style="margin-top:8px"><span>Из чего сложилось</span><span></span></div>${lines}
+    </div>${v.warnings.length ? `<ul class="warnings">${v.warnings.map((w) => `<li>${esc(w)}</li>`).join("")}</ul>` : ""}`;
+  } else {
+    calc = `<p class="note" style="margin:0">${esc(t.error)}</p>`;
+  }
+  const dates = [`Передать можно с ${dmy(t.tradable_from)} (Trade Protection ${market(t.buy_market)?.lock_days ?? 7} дн.)`];
+  if (t.payout_at) dates.push(`Деньги доступны для вывода с ${dmy(t.payout_at)}`);
+  const rate = [t.buy_usd_per_eur && `курс при покупке ${t.buy_usd_per_eur}`, t.sell_usd_per_eur && `при продаже ${t.sell_usd_per_eur}`].filter(Boolean).join(", ");
+  return `<tr class="detail"><td colspan="5"><div class="detail-grid">
+    <div>${calc}</div>
+    <div style="display:grid;gap:10px;align-content:start">
+      <div class="small">${dates.map(esc).join("<br>")}</div>
+      ${rate ? `<div class="muted small">USD: ${esc(rate)}</div>` : ""}
+      <div class="actions" style="margin-top:4px">
+        ${t.status === "sold" ? "" : `<button type="button" class="btn primary small" data-act="sell" data-id="${t.id}">Записать продажу</button>`}
+        <button type="button" class="btn small" data-act="edit" data-id="${t.id}">Изменить</button>
+        <button type="button" class="btn small danger" data-act="delete" data-id="${t.id}">Удалить</button>
+      </div>
+    </div></div></td></tr>`;
+}
+$("#ledger").addEventListener("click", (e) => {
+  const act = e.target.closest("[data-act]");
+  if (act) { handleAction(act.dataset.act, Number(act.dataset.id), act); return; }
+  const row = e.target.closest("tr.row");
+  if (row) { const id = Number(row.dataset.id); S.openRow = S.openRow === id ? null : id; renderLedger(); }
+});
+$("#ledger").addEventListener("keydown", (e) => {
+  const row = e.target.closest("tr.row");
+  if (row && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); row.click(); }
+});
+document.querySelectorAll(".filters button").forEach((b) => b.addEventListener("click", () => {
+  S.filter = b.dataset.filter;
+  document.querySelectorAll(".filters button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+  renderLedger();
+}));
+
+async function handleAction(act, id, btn) {
+  const t = S.trades.find((x) => x.id === id);
+  if (act === "delete") {
+    if (btn.dataset.confirm !== "1") { btn.dataset.confirm = "1"; btn.textContent = "Точно удалить?"; return; }
+    try { await api("DELETE", `/api/trades/${id}`); toast(`Удалено: ${t.name}`); S.openRow = null; await loadJournal(); }
+    catch (err) { toast(err.error, true); }
+    return;
+  }
+  openDialog(t, act === "sell");
+}
+
+/* ---------- диалог ---------- */
+function openDialog(t, sale) {
+  const dlg = $("#dlg"), body = $("#dlg-body");
+  const prefill = sale ? { ...t, sold_at: today(), sell_market: t.target_market, sell_price: "" } : t;
+  $("#dlg-title").textContent = sale ? `Продажа: ${t.name}` : `Изменить: ${t.name}`;
+  body.innerHTML = tradeFields("d", prefill, true) + `<div class="actions" style="margin-top:0">
+    <button type="submit" class="btn primary">${sale ? "Записать продажу" : "Сохранить"}</button>
+    ${t.status === "sold" && !sale ? `<button type="button" class="btn" id="d-unsell">Отменить продажу</button>` : ""}
+  </div>`;
+  const form = $("#dlg-form");
+  wireTradeForm(form, "d");
+  $("#d-unsell")?.addEventListener("click", () => { ["sold_at", "sell_price"].forEach((n) => ($(`#d-${n}`).value = "")); $("#d-sell_market").value = ""; form.requestSubmit(); });
+  dlg.showModal();
+  (sale ? $("#d-sell_price") : $("#d-name")).focus();
+  form.dataset.id = t.id;
+}
+$("#dlg-close").addEventListener("click", () => $("#dlg").close());
+$("#dlg-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const form = e.currentTarget, btn = $("button[type=submit]", form);
+  btn.disabled = true;
+  try {
+    const t = await api("PUT", `/api/trades/${form.dataset.id}`, readTrade(form));
+    $("#dlg").close();
+    toast(t.status === "sold" ? `Продажа записана: ${signed(t.valuation?.profit ?? 0)} EUR` : "Сохранено");
+    S.openRow = t.id;
+    await loadJournal();
+  } catch (err) { showErrors(form, err); } finally { btn.disabled = false; }
+});
+
+/* ---------- настройки ---------- */
+function renderSettings() {
+  const s = S.meta.settings, form = $("#set-form");
+  for (const k of ["min_price", "max_price", "limit", "min_sales_7d", "min_profit"]) form.elements[k].value = s[k];
+  form.elements.min_roi.value = String(Math.round(Number(s.min_roi) * 10000) / 100);
+  const d = S.meta.defaults;
+  $("#set-state").innerHTML = S.meta.settings_saved
+    ? `<strong>Свои настройки</strong> · сканер применяет их со следующего прохода`
+    : `<strong>Стандартные настройки</strong> · ${esc(d.min_price)}–${esc(d.max_price)} EUR, продаж от ${esc(d.min_sales_7d)}`;
+  $("#set-reset").hidden = !S.meta.settings_saved;
+}
+$("#set-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const form = e.currentTarget, data = Object.fromEntries(new FormData(form).entries());
+  for (const k in data) data[k] = data[k].trim().replace(",", ".").replace(/\s/g, "");
+  const roi = Number(data.min_roi);
+  data.min_roi = data.min_roi === "" || Number.isNaN(roi) ? data.min_roi : String(roi / 100);
+  try {
+    S.meta = await api("PUT", "/api/settings", data);
+    showErrors(form, { fields: {} }); $("#toast").hidden = true;
+    renderSettings(); toast("Сохранено. Сканер применит со следующего прохода");
+  } catch (err) { showErrors(form, err); }
+});
+$("#set-reset").addEventListener("click", async () => {
+  try { S.meta = await api("DELETE", "/api/settings"); renderSettings(); toast("Вернул стандартные настройки"); }
+  catch (err) { toast(err.error, true); }
+});
+
+/* ---------- загрузка и вкладки ---------- */
+async function loadJournal() {
+  const data = await api("GET", "/api/trades");
+  S.trades = data.trades; S.summary = data.summary;
+  renderKpis(); renderLedger();
+}
+function route() {
+  const tab = location.hash === "#scanner" ? "scanner" : "journal";
+  $("#view-journal").hidden = tab !== "journal";
+  $("#view-scanner").hidden = tab !== "scanner";
+  for (const name of ["journal", "scanner"]) {
+    const a = $(`#tab-${name}`);
+    if (name === tab) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
+  }
+}
+window.addEventListener("hashchange", route);
+async function start() {
+  route();
+  try {
+    S.meta = await api("GET", "/api/state");
+    renderStatus(); renderSettings(); renderNewForm();
+    await loadJournal();
+  } catch (err) { toast(err.error || "Не удалось загрузить данные", true); }
+  setInterval(async () => { try { S.meta = { ...S.meta, ...(await api("GET", "/api/state")) }; renderStatus(); } catch {} }, 60000);
+}
+start();
+</script>
+</body>
+</html>

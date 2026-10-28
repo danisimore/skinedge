@@ -15,6 +15,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from skinedge.games import CS2
+from skinedge.journal import Trade
 from skinedge.money import Currency
 from skinedge.paper import MODEL, PaperTrade
 from skinedge.quotes import Quote, QuoteKind, SalesStats, SalesWindow
@@ -92,6 +93,29 @@ CREATE TABLE IF NOT EXISTS notifications (
 );
 CREATE INDEX IF NOT EXISTS notify_item ON notifications (market_hash_name, buy_market, sell_market);
 
+-- Журнал реальных сделок, которые пользователь вносит в интерфейсе.
+CREATE TABLE IF NOT EXISTS trades (
+    id INTEGER PRIMARY KEY,
+    app_id INTEGER NOT NULL,
+    market_hash_name TEXT NOT NULL,
+    bought_at TEXT NOT NULL,
+    buy_market TEXT NOT NULL,
+    buy_price TEXT NOT NULL,
+    buy_currency TEXT NOT NULL,
+    buy_usd_per_eur TEXT,
+    target_market TEXT NOT NULL,
+    target_price TEXT NOT NULL,
+    target_currency TEXT NOT NULL,
+    target_at TEXT NOT NULL,
+    sold_at TEXT,
+    sell_market TEXT,
+    sell_price TEXT,
+    sell_currency TEXT,
+    sell_usd_per_eur TEXT,
+    note TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -138,12 +162,14 @@ class Storage:
 
     Args:
         path: Файл базы; ``":memory:"`` для тестов.
+        threads: Соединение используется из разных потоков (вызывающий сам
+            следит, чтобы запросы не шли одновременно).
     """
 
-    def __init__(self, path: Path | str) -> None:
+    def __init__(self, path: Path | str, threads: bool = False) -> None:
         if isinstance(path, Path):
             path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(str(path))
+        self.conn = sqlite3.connect(str(path), check_same_thread=not threads)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.executescript(SCHEMA)
@@ -466,6 +492,71 @@ class Storage:
                     app_id,
                 ),
             )
+
+    # ---------- журнал сделок ----------
+
+    _TRADE_FIELDS = (
+        "app_id",
+        "market_hash_name",
+        "bought_at",
+        "buy_market",
+        "buy_price",
+        "buy_currency",
+        "buy_usd_per_eur",
+        "target_market",
+        "target_price",
+        "target_currency",
+        "target_at",
+        "sold_at",
+        "sell_market",
+        "sell_price",
+        "sell_currency",
+        "sell_usd_per_eur",
+        "note",
+        "created_at",
+    )
+
+    def save_trade(self, trade: Trade) -> int:
+        """Добавляет сделку (``id is None``) или обновляет существующую. Возвращает id.
+
+        Raises:
+            KeyError: Если сделки с таким id нет.
+        """
+        data = trade.model_dump(mode="json")
+        values = [data[f] for f in self._TRADE_FIELDS]
+        with self._tx() as c:
+            if trade.id is None:
+                cur = c.execute(
+                    f"INSERT INTO trades ({', '.join(self._TRADE_FIELDS)})"
+                    f" VALUES ({', '.join('?' * len(self._TRADE_FIELDS))})",
+                    values,
+                )
+                return int(cur.lastrowid or 0)
+            cur = c.execute(
+                f"UPDATE trades SET {', '.join(f + ' = ?' for f in self._TRADE_FIELDS)}"
+                " WHERE id = ?",
+                [*values, trade.id],
+            )
+            if cur.rowcount == 0:
+                raise KeyError(f"нет сделки {trade.id}")
+            return trade.id
+
+    def trades(self) -> list[Trade]:
+        """Все сделки журнала: сначала открытые, затем по дате покупки, свежие первыми."""
+        cur = self.conn.execute(
+            "SELECT * FROM trades ORDER BY sold_at IS NOT NULL, bought_at DESC, id DESC"
+        )
+        return [Trade.model_validate(dict(r)) for r in cur]
+
+    def trade(self, trade_id: int) -> Trade | None:
+        """Сделка по id."""
+        row = self.conn.execute("SELECT * FROM trades WHERE id = ?", (trade_id,)).fetchone()
+        return None if row is None else Trade.model_validate(dict(row))
+
+    def delete_trade(self, trade_id: int) -> bool:
+        """Удаляет сделку. Возвращает, была ли она."""
+        with self._tx() as c:
+            return c.execute("DELETE FROM trades WHERE id = ?", (trade_id,)).rowcount > 0
 
     def get_meta(self, key: str) -> str | None:
         """Служебное значение (время последнего отчёта, сигнал фонового запуска)."""

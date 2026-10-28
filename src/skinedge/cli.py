@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import webbrowser
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from logging.handlers import RotatingFileHandler
@@ -34,6 +35,9 @@ from skinedge.sources.lisskins import LisSkinsSource
 from skinedge.sources.marketcsgo import MarketCSGOSource
 from skinedge.sources.skinport import SkinportSource
 from skinedge.storage import Storage
+from skinedge.tuning import load as load_tuning
+from skinedge.ui.server import App as UiApp
+from skinedge.ui.server import Rates, serve
 
 app = typer.Typer(help="SkinEdge: анализ арбитража игровых предметов. Только анализ, без сделок.")
 
@@ -583,6 +587,10 @@ def scan(
     fx = _fx(settings, usd_per_eur)
     typer.echo(f"Курс: 1 EUR = {fx.rates[Currency.USD]} USD ({fx.source}), спред {_pct(fx.spread)}")
     storage = Storage(settings.db_path)
+    tuning = load_tuning(storage)
+    if tuning is not None:
+        opts = tuning.apply(opts)
+        typer.echo(f"Настройки из интерфейса: {tuning.describe()}")
     try:
         pipeline = Pipeline(
             storage,
@@ -893,3 +901,39 @@ def paper_report(
         "Для контрольных точек нужны свежие цены: держи skinedge run включённым "
         "или запускай skinedge scan хотя бы раз в день."
     )
+
+
+@app.command("ui")
+def ui_command(
+    port: Annotated[int, typer.Option(help="Порт на 127.0.0.1")] = 8765,
+    browser: Annotated[
+        bool, typer.Option("--browser/--no-browser", help="Сразу открыть в браузере")
+    ] = True,
+    verbose: Verbose = False,
+) -> None:
+    """Интерфейс в браузере: настройки сканера и журнал сделок (только на этом компьютере)."""
+    logging.basicConfig(level=logging.DEBUG if verbose else logging.INFO, format="%(message)s")
+    _quiet_http()
+    settings = Settings()
+    schedule = _schedule(settings)
+    storage = Storage(settings.db_path, threads=True)
+    rates = Rates(lambda: ecb.fetch_rates(settings.fx_spread), storage, lambda: datetime.now(UTC))
+    ui = UiApp(storage, schedule, rates, settings.fx_spread)
+
+    def ready(url: str) -> None:
+        typer.echo(f"Интерфейс SkinEdge: {url}")
+        typer.echo("Остановить: Ctrl+C или закрыть это окно. Сканер при этом не останавливается.")
+        if browser:
+            webbrowser.open(url)
+
+    try:
+        serve(ui, port, ready)
+    except OSError as exc:
+        typer.echo(
+            f"Не удалось занять порт {port} ({exc}). Интерфейс уже открыт в другом окне? "
+            f"Или запусти с другим портом: --port {port + 1}",
+            err=True,
+        )
+        raise typer.Exit(1) from exc
+    finally:
+        storage.close()

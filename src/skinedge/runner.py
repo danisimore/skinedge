@@ -11,6 +11,9 @@
 
 Когда игр три и больше, первая из списка сканируется каждый проход, а остальные
 по очереди, по одной за проход (см. :func:`games_for_pass`).
+
+Настройки, сохранённые в интерфейсе (:mod:`skinedge.tuning`), перечитываются в
+начале каждого прохода и действуют вместо флагов запуска.
 """
 
 from __future__ import annotations
@@ -33,6 +36,8 @@ from skinedge.paper import build_report
 from skinedge.pipeline import Pipeline, ScanOptions, ScanResult
 from skinedge.scanner import ScanConfig
 from skinedge.sources.base import SourceError
+from skinedge.tuning import ScanSettings
+from skinedge.tuning import load as load_tuning
 
 log = logging.getLogger(__name__)
 
@@ -130,6 +135,7 @@ class Runner:
         self.failed = 0  # с прошлого отчёта
         self._fx: FxRates | None = None
         self._fx_at: datetime | None = None
+        self._tuning: ScanSettings | None = None
 
     # ---------- цикл ----------
 
@@ -170,7 +176,7 @@ class Runner:
         try:
             self.pipeline.fx = self._rates(started)
             opts = replace(self.scan, games=games_for_pass(self.scan.games, n))
-            result = self.pipeline.run(opts)
+            result = self.pipeline.run(self._tuned(opts))
         except Exception as exc:  # любой сбой прохода не должен останавливать работу
             self._failed(n, exc)
         else:
@@ -178,6 +184,17 @@ class Runner:
         self._chores(self.clock())
         self._beat(self.clock())
         return result
+
+    def _tuned(self, opts: ScanOptions) -> ScanOptions:
+        """Параметры прохода с настройками из интерфейса, если они сохранены."""
+        tuning = load_tuning(self.storage)
+        if tuning != self._tuning:
+            if tuning is None:
+                log.info("Настройки из интерфейса сброшены, действуют флаги запуска")
+            else:
+                log.info("Настройки из интерфейса: %s", tuning.describe())
+            self._tuning = tuning
+        return opts if tuning is None else tuning.apply(opts)
 
     def _succeeded(self, n: int, result: ScanResult, took: timedelta) -> None:
         if self.alerted:
