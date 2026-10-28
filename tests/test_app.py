@@ -292,7 +292,7 @@ def test_cli_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         seen.append(call(ui, "GET", "/api/scanner")[1])
 
     monkeypatch.setattr(cli, "serve", fake_serve)
-    result = CliRunner().invoke(app, ["app", "--port", "8799"])
+    result = CliRunner().invoke(app, ["app", "--port", "8799", "--skinport"])
     assert result.exit_code == 0, result.output
     assert opened == ["http://127.0.0.1:8799/"]
     state = seen[0]

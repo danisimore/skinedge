@@ -13,7 +13,7 @@ from skinedge.fees.schedule import FeeSchedule
 from skinedge.games import CS2, DOTA2, RUST
 from skinedge.money import Currency, Money
 from skinedge.paper import PaperTrade
-from skinedge.pipeline import Pipeline, ScanOptions
+from skinedge.pipeline import ROUTES, SKINPORT, Pipeline, ScanOptions, routes
 from skinedge.quotes import Quote, QuoteKind, Sale, SalesWindow
 from skinedge.sources.base import SourceError
 from skinedge.sources.marketcsgo import INDEX_SECONDS, MarketCSGOSource, item_url
@@ -258,7 +258,7 @@ def test_market_csgo_routes() -> None:
     s = Storage(":memory:")
     tm = FakeMarketCSGO()
     out: list[str] = []
-    result = _pipeline(s, tm, out).scan(ScanOptions(limit=2))
+    result = _pipeline(s, tm, out).scan(ScanOptions(limit=2, skinport=True))
 
     assert tm.requested == [NAME, "X"]
     assert "Market.CSGO: запрошено 2, с лотами 2" in out
@@ -279,15 +279,32 @@ def test_market_csgo_routes() -> None:
     assert buy.buy_url == "https://market.csgo.com/ru/AK-47%20%7C%20Redline%20%28Field-Tested%29"
 
     # Через 10 минут история не перечитывается: файлы обновляются раз в час.
-    _pipeline(s, tm, out).scan(ScanOptions(limit=2))
+    _pipeline(s, tm, out).scan(ScanOptions(limit=2, skinport=True))
     assert tm.sales_for == ["X"]
     assert s.recent_sales("marketcsgo", SalesWindow.D7, NOW)["X"].volume == 6
+
+
+def test_skinport_routes_only_on_request() -> None:
+    assert routes(True) == ROUTES
+    assert routes(False) == tuple(r for r in ROUTES if SKINPORT not in r)
+    # Без Skinport продаём на DMarket и Market.CSGO.
+    assert {sell for _, sell in routes(False)} == {"dmarket", "marketcsgo"}
+
+
+def test_skinport_is_only_a_price_source_by_default() -> None:
+    tm = FakeMarketCSGO()
+    result = _pipeline(Storage(":memory:"), tm, []).scan(ScanOptions(limit=2))
+    assert not any(SKINPORT in route for route in _routes(result.found))
+    # Предметы выбраны по ценам Skinport.
+    assert tm.requested == [NAME, "X"]
+    # X выгоден только с покупкой на Skinport: его продажи не проверяются.
+    assert tm.sales_for == []
 
 
 def test_market_csgo_without_sales_is_not_a_sell() -> None:
     tm = FakeMarketCSGO(fail_sales=True)
     out: list[str] = []
-    result = _pipeline(Storage(":memory:"), tm, out).scan(ScanOptions(limit=2))
+    result = _pipeline(Storage(":memory:"), tm, out).scan(ScanOptions(limit=2, skinport=True))
     assert tm.sales_for == ["X"]
     assert any("проверка прервана" in line for line in out)
     assert not any(o.result.sell_market == "marketcsgo" for o in result.found)
@@ -297,7 +314,7 @@ def test_market_csgo_without_sales_is_not_a_sell() -> None:
 def test_market_csgo_failure_skips_only_it() -> None:
     out: list[str] = []
     result = _pipeline(Storage(":memory:"), FakeMarketCSGO(fail_prices=True), out).scan(
-        ScanOptions(limit=2)
+        ScanOptions(limit=2, skinport=True)
     )
     assert "Market.CSGO пропущен: prices/RUB.json: HTTP 503" in out
     assert result.found and all(
@@ -328,6 +345,6 @@ def test_open_trade_on_market_csgo_is_checked() -> None:
         )
     )
     tm = FakeMarketCSGO()
-    _pipeline(s, tm, []).scan(ScanOptions(limit=2))
+    _pipeline(s, tm, []).scan(ScanOptions(limit=2, skinport=True))
     assert "Old" in tm.requested
     assert tm.sales_for == ["X", "Old"]

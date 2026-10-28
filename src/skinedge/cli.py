@@ -515,6 +515,7 @@ def _scan_options(
     paper: bool,
     notify: bool,
     csfloat: int,
+    skinport: bool,
 ) -> ScanOptions:
     try:
         game_ids = parse_games(games)
@@ -535,6 +536,7 @@ def _scan_options(
         paper=paper,
         notify=notify,
         csfloat=csfloat,
+        skinport=skinport,
     )
 
 
@@ -585,6 +587,15 @@ LisSkins = Annotated[
         help="Покупка на Lis-Skins (публичный прайс-лист, ключ не нужен)",
     ),
 ]
+Skinport = Annotated[
+    bool,
+    typer.Option(
+        "--skinport/--no-skinport",
+        help="Искать сделки с покупкой или продажей на Skinport (по умолчанию нет: "
+        "деньги туда и обратно только через SWIFT). Цены Skinport загружаются в любом "
+        "случае: по ним выбираются ликвидные предметы",
+    ),
+]
 
 
 def _csfloat_source(
@@ -617,11 +628,13 @@ def scan(
     csfloat: CSFloatItems = 40,
     marketcsgo: MarketCSGO = True,
     lisskins: LisSkins = True,
+    skinport: Skinport = False,
     verbose: Verbose = False,
 ) -> None:
-    """Ищет выгодные маршруты между Skinport, DMarket и Market.CSGO.
+    """Ищет выгодные маршруты между DMarket и Market.CSGO.
 
-    Покупка также на Lis-Skins и на CSFloat (только CS2).
+    Покупка также на Lis-Skins и на CSFloat (только CS2). Skinport — только
+    источник цен, сделки на нём ищутся с ``--skinport``.
 
     Только анализ, без сделок.
     """
@@ -640,6 +653,7 @@ def scan(
         paper,
         notify,
         csfloat,
+        skinport,
     )
     settings = Settings()
     schedule = _schedule(settings)
@@ -751,6 +765,7 @@ def run_command(
     csfloat: CSFloatItems = 40,
     marketcsgo: MarketCSGO = True,
     lisskins: LisSkins = True,
+    skinport: Skinport = False,
     verbose: Verbose = False,
 ) -> None:
     """Сканирует по расписанию, пока не остановят (Ctrl+C). Только анализ, без сделок.
@@ -779,6 +794,7 @@ def run_command(
         paper,
         notify and telegram is not None,
         csfloat,
+        skinport,
     )
     manual = _manual_fx(settings, usd_per_eur, rub_per_eur)
 
@@ -1028,6 +1044,7 @@ def app_command(
     scan_now: Annotated[
         bool, typer.Option("--scan/--no-scan", help="Сразу запустить сканер (для автозапуска)")
     ] = False,
+    skinport: Skinport = False,
     verbose: Verbose = False,
 ) -> None:
     """Приложение SkinEdge: интерфейс в браузере, сканер запускается кнопкой.
@@ -1051,7 +1068,7 @@ def app_command(
         raise typer.Exit(1) from exc
     logger = _run_logging(settings.log_path, verbose)
     try:
-        _run_app(settings, logger, port, browser, scan_now)
+        _run_app(settings, logger, port, browser, scan_now, skinport)
     except SetupError as exc:
         logger.error("SkinEdge не запустился: %s", exc)
         _alert(f"SkinEdge не запустился: {exc}")
@@ -1072,7 +1089,12 @@ def app_command(
 
 
 def _run_app(
-    settings: Settings, logger: logging.Logger, port: int, browser: bool, scan_now: bool
+    settings: Settings,
+    logger: logging.Logger,
+    port: int,
+    browser: bool,
+    scan_now: bool,
+    skinport: bool,
 ) -> None:
     schedule = _load_schedule(settings)
     telegram = _telegram_target(settings)
@@ -1080,7 +1102,19 @@ def _run_app(
         logger.warning("Telegram не настроен: уведомлений, отчёта и тревог не будет")
     # Те же параметры, что у skinedge run по умолчанию; настройки из интерфейса — поверх.
     opts = _scan_options(
-        ALL_GAMES, 300, "1", "500", "0.50", "0.05", 30, 40, True, True, telegram is not None, 40
+        ALL_GAMES,
+        300,
+        "1",
+        "500",
+        "0.50",
+        "0.05",
+        30,
+        40,
+        True,
+        True,
+        telegram is not None,
+        40,
+        skinport,
     )
 
     def fx_source() -> FxRates:

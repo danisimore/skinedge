@@ -185,7 +185,7 @@ def _pipeline(storage: Storage, lis: FakeLisSkins, out: list[str]) -> Pipeline:
 def test_lis_skins_is_a_buy_market() -> None:
     lis = FakeLisSkins()
     out: list[str] = []
-    result = _pipeline(Storage(":memory:"), lis, out).scan(ScanOptions(limit=2))
+    result = _pipeline(Storage(":memory:"), lis, out).scan(ScanOptions(limit=2, skinport=True))
 
     assert lis.requested == [NAME, "X"]
     assert "Lis-Skins: запрошено 2, с лотами 1" in out
@@ -199,6 +199,8 @@ def test_lis_skins_is_a_buy_market() -> None:
 
 def test_lis_skins_failure_skips_only_it() -> None:
     out: list[str] = []
-    result = _pipeline(Storage(":memory:"), FakeLisSkins(fail=True), out).scan(ScanOptions(limit=2))
+    result = _pipeline(Storage(":memory:"), FakeLisSkins(fail=True), out).scan(
+        ScanOptions(limit=2, skinport=True)
+    )
     assert "Lis-Skins пропущен: csgo.json: HTTP 503" in out
     assert result.found and all(o.result.buy_market != "lisskins" for o in result.found)

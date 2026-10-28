@@ -97,7 +97,7 @@ def test_games_are_scanned_separately() -> None:
     out: list[str] = []
     cf = FakeCSFloat()
     sp = GameSkinport(NOW)
-    opts = ScanOptions(games=(CS2, DOTA2), limit=2, csfloat=5)
+    opts = ScanOptions(games=(CS2, DOTA2), limit=2, csfloat=5, skinport=True)
     result = _pipeline(sp, s, out, cf).run(opts)
 
     assert sp.games == [CS2, DOTA2]
@@ -120,7 +120,7 @@ def test_games_are_scanned_separately() -> None:
 def test_one_broken_game_does_not_stop_the_pass() -> None:
     out: list[str] = []
     sp = GameSkinport(NOW, broken=(RUST,))
-    opts = ScanOptions(games=(CS2, RUST), limit=2, paper=False)
+    opts = ScanOptions(games=(CS2, RUST), limit=2, paper=False, skinport=True)
     result = _pipeline(sp, Storage(":memory:"), out).run(opts)
     assert {o.buy_quote.app_id for o in result.found} == {CS2}
     assert "Rust · игра пропущена: Skinport /items: HTTP 503" in out

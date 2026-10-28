@@ -430,7 +430,12 @@ def test_cli_scan_and_paper(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     s.close()
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("SKINEDGE_DB_PATH", str(db))
-    result = CliRunner().invoke(app, SCAN_ARGS)
+    # По умолчанию сделок на Skinport не ищем: его цены только выбирают предметы.
+    default = CliRunner().invoke(app, SCAN_ARGS)
+    assert default.exit_code == 0, default.output
+    assert "Возможностей: 0" in default.output and "→ skinport" not in default.output
+
+    result = CliRunner().invoke(app, [*SCAN_ARGS, "--skinport"])
     assert result.exit_code == 0, result.output
     assert "dmarket → skinport" in result.output
     assert "прибыль 2.77 EUR" in result.output
@@ -439,7 +444,7 @@ def test_cli_scan_and_paper(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
 
     low = CliRunner().invoke(
         app,
-        [*SCAN_ARGS, "--min-roi", "0", "--min-profit", "0"],
+        [*SCAN_ARGS, "--skinport", "--min-roi", "0", "--min-profit", "0"],
     )
     assert low.exit_code == 0, low.output
     assert "Записано виртуальных сделок: 0" in low.output  # диагностика не пишет в журнал

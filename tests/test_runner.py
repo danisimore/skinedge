@@ -107,7 +107,7 @@ def test_pipeline_saves_only_universe() -> None:
         out=out.append,
         clock=lambda: START,
     )
-    result = p.run(ScanOptions(limit=2))
+    result = p.run(ScanOptions(limit=2, skinport=True))
 
     # Две самых ликвидных в диапазоне цен и предмет открытой виртуальной сделки.
     assert dm.requested == [NAME, "X", "Old"]
@@ -343,7 +343,16 @@ def test_cli_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TG_BOT_TOKEN", TOKEN)
     monkeypatch.setenv("TG_CHAT_ID", "777")
 
-    args = ["run", "--iterations", "1", "--usd-per-eur", "1.10", "--rub-per-eur", "90"]
+    args = [
+        "run",
+        "--iterations",
+        "1",
+        "--usd-per-eur",
+        "1.10",
+        "--rub-per-eur",
+        "90",
+        "--skinport",
+    ]
     args += ["--limit", "2", "--no-report"]
     args += ["--no-marketcsgo", "--no-lisskins"]  # без сети
     result = CliRunner().invoke(app, args)

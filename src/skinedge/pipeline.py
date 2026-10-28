@@ -12,6 +12,11 @@ CSFloat отдаёт 200 запросов в час, по одному на пр
 проверяется только часть вселенной (``ScanOptions.csfloat``), по кругу.
 Market.CSGO и Lis-Skins отдают весь прайс-лист игры одним файлом.
 
+Skinport по умолчанию только источник данных: по его ценам выбирается вселенная,
+по его продажам считается тренд и выбираются предметы для CSFloat. Сделок с
+покупкой или продажей на Skinport сканер не ищет (``ScanOptions.skinport``):
+пополнить и вывести деньги там можно только через SWIFT, без криптовалюты.
+
 Продажу на DMarket и Market.CSGO сканер подтверждает реальными сделками: их
 история загружается по одному предмету и только для кандидатов, которые выгодны
 даже по предварительной цене (минимальный лот без статистики продаж).
@@ -63,6 +68,7 @@ ROUTES = (
     ("lisskins", "dmarket"),
     ("lisskins", "marketcsgo"),
 )
+SKINPORT = "skinport"
 CSFLOAT_OFFSET = "csfloat.offset"
 NOTIFY_COOLDOWN = timedelta(hours=24)
 NOTIFY_MAX = 5
@@ -90,6 +96,8 @@ class ScanOptions:
         paper: Записывать виртуальные сделки.
         notify: Отправлять уведомления.
         csfloat: Сколько предметов проверить на CSFloat за проход (0 — не проверять).
+        skinport: Искать сделки с покупкой или продажей на Skinport. Цены и продажи
+            Skinport загружаются в любом случае.
     """
 
     games: tuple[int, ...] = (CS2,)
@@ -102,6 +110,7 @@ class ScanOptions:
     paper: bool = True
     notify: bool = True
     csfloat: int = 40
+    skinport: bool = False
 
 
 @dataclass
@@ -121,6 +130,11 @@ class ScanResult:
     pairs: int = 0
     recorded: int = 0
     notified: int = 0
+
+
+def routes(skinport: bool) -> tuple[tuple[str, str], ...]:
+    """Маршруты прохода: без Skinport, если сделки на нём выключены."""
+    return ROUTES if skinport else tuple(r for r in ROUTES if SKINPORT not in r)
 
 
 def liquid(quotes: list[Quote], limit: int, min_price: Decimal, max_price: Decimal) -> list[str]:
@@ -247,15 +261,20 @@ class Pipeline:
         now = self.clock()
         quotes = {m: self.storage.recent_quotes(m, now - cfg.max_age, app_id) for m in MARKETS}
         scanner = Scanner(schedule, self.fx, cfg)
+        pass_routes = routes(opts.skinport)
         if opts.fetch:
             # Продажу на DMarket подтверждаем реальными сделками: минимальный лот
             # без сделок может стоять месяцами и не говорит о спросе.
             self._verify_dmarket(
-                self._to_verify(scanner, quotes, "dmarket", now, app_id, opts.verify), app_id, now
+                self._to_verify(scanner, quotes, pass_routes, "dmarket", now, app_id, opts.verify),
+                app_id,
+                now,
             )
             if self.marketcsgo is not None:
                 self._verify_marketcsgo(
-                    self._to_verify(scanner, quotes, "marketcsgo", now, app_id, opts.verify),
+                    self._to_verify(
+                        scanner, quotes, pass_routes, "marketcsgo", now, app_id, opts.verify
+                    ),
                     app_id,
                     now,
                 )
@@ -266,7 +285,7 @@ class Pipeline:
         }
         changes = trends(self.storage, stats_since, app_id)
         found: list[Opportunity] = []
-        for buy, sell in ROUTES:
+        for buy, sell in pass_routes:
             found += scanner.scan(buy, sell, quotes[buy], quotes[sell], sales[sell], now, changes)
         return found, len(quotes["skinport"].keys() & quotes["dmarket"].keys())
 
@@ -397,6 +416,7 @@ class Pipeline:
         self,
         scanner: Scanner,
         quotes: dict[str, dict[str, Quote]],
+        pass_routes: tuple[tuple[str, str], ...],
         sell: str,
         now: datetime,
         app_id: int,
@@ -405,7 +425,7 @@ class Pipeline:
         """Предметы, чьи продажи на ``sell`` нужно проверить: кандидаты и открытые сделки."""
         check = [
             name
-            for buy, to in ROUTES
+            for buy, to in pass_routes
             if to == sell
             for name in scanner.candidates(buy, sell, quotes[buy], quotes[sell], now, limit)
         ]

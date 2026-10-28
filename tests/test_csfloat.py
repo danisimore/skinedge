@@ -148,7 +148,7 @@ def test_pipeline_buys_on_csfloat() -> None:
     s = Storage(":memory:")
     cf = FakeCSFloat()
     out: list[str] = []
-    result = _pipeline(cf, s, out).run(ScanOptions(limit=3, csfloat=5, paper=False))
+    result = _pipeline(cf, s, out).run(ScanOptions(limit=3, csfloat=5, paper=False, skinport=True))
 
     # Только предметы со спросом на Skinport: у X нет продаж.
     assert cf.asked == [[NAME, "Old"]]
@@ -163,6 +163,8 @@ def test_pipeline_buys_on_csfloat() -> None:
 def test_pipeline_survives_csfloat_error() -> None:
     out: list[str] = []
     cf = FakeCSFloat(error=SourceError("CSFloat: ключ API не принят (HTTP 401)"))
-    result = _pipeline(cf, Storage(":memory:"), out).run(ScanOptions(limit=2, paper=False))
+    result = _pipeline(cf, Storage(":memory:"), out).run(
+        ScanOptions(limit=2, paper=False, skinport=True)
+    )
     assert [o.result.buy_market for o in result.found] == ["dmarket"]
     assert any("CSFloat пропущен" in line for line in out)
