@@ -91,6 +91,8 @@ def estimate_sell(
     """
     if quote is None or quote.min_price is None or quote.quantity < 1:
         return None
+    if sales_7d is not None and sales_7d.currency is not quote.currency:
+        sales_7d = None  # статистика в прежней валюте площадки с ценой не сравнима
     ask = quote.min_price - UNDERCUT
     if ask <= 0:
         return None
@@ -240,6 +242,8 @@ class Scanner:
             bq, sq = buy_quotes[name], sell_quotes[name]
             if bq.min_price is None or bq.quantity < 1:
                 continue
+            if not self._current(buy_market, bq) or not self._current(sell_market, sq):
+                continue
             if now - bq.fetched_at > self.cfg.max_age or now - sq.fetched_at > self.cfg.max_age:
                 continue
             sell = estimate_sell(sq, sell_sales.get(name), self.cfg)
@@ -291,6 +295,8 @@ class Scanner:
             bq, sq = buy_quotes[name], sell_quotes[name]
             if bq.min_price is None or bq.quantity < 1:
                 continue
+            if not self._current(buy_market, bq) or not self._current(sell_market, sq):
+                continue
             if now - bq.fetched_at > self.cfg.max_age or now - sq.fetched_at > self.cfg.max_age:
                 continue
             sell = estimate_sell(sq, None, self.cfg, require_sales=False)
@@ -302,6 +308,10 @@ class Scanner:
             if profit >= min_profit and profit.amount >= cost.amount * self.cfg.min_roi:
                 scored.append((profit.amount / cost.amount, name))
         return [name for _, name in sorted(scored, reverse=True)[:limit]]
+
+    def _current(self, market: str, quote: Quote) -> bool:
+        """Котировка в нынешней валюте площадки (не сохранена до смены валюты)."""
+        return quote.currency is self.schedule.market(market).currency
 
     def _flags(
         self, name: str, buy: Quote, result: RouteResult, trend: Decimal | None

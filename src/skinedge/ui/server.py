@@ -143,40 +143,43 @@ def _bad(exc: ValidationError, rename: dict[str, str] | None = None) -> BadReque
 
 @dataclass
 class Rates:
-    """Курс USD для журнала: ЕЦБ раз в 6 часов, при сбое — последний полученный.
+    """Курсы для журнала (USD от ЕЦБ, RUB от ЦБ РФ): раз в 6 часов, при сбое — последние.
 
     Args:
-        fetch: Загрузка курсов (ЕЦБ).
-        storage: База, где хранится последний полученный курс.
+        fetch: Загрузка курсов.
+        storage: База, где хранятся последние полученные курсы.
         clock: Текущее время UTC.
     """
 
     fetch: Callable[[], FxRates]
     storage: Storage
     clock: Callable[[], datetime]
-    _rate: Decimal | None = None
+    _rates: dict[Currency, Decimal] = field(default_factory=dict)
     _source: str | None = None
     _as_of: datetime | None = None
     _checked: datetime | None = field(default=None, repr=False)
 
-    def current(self) -> tuple[Decimal | None, str | None, datetime | None]:
-        """Курс USD за 1 EUR, источник и время курса."""
+    def current(self) -> tuple[dict[Currency, Decimal], str | None, datetime | None]:
+        """Курсы валют за 1 EUR, источник и время курса."""
         now = self.clock()
         if self._checked is None or now - self._checked >= FX_REFRESH:
             self._checked = now
             try:
                 fx = self.fetch()
-                self._rate = fx.rates[Currency.USD]
+                self._rates = dict(fx.rates)
                 self._source = fx.source
                 self._as_of = fx.as_of or now
-                self.storage.set_meta(
-                    FX_KEY, json.dumps({"rate": str(self._rate), "as_of": self._as_of.isoformat()})
-                )
+                saved = {
+                    "rates": {c.value: str(r) for c, r in self._rates.items()},
+                    "source": self._source,
+                    "as_of": self._as_of.isoformat(),
+                }
+                self.storage.set_meta(FX_KEY, json.dumps(saved, ensure_ascii=False))
             except (SourceError, KeyError, ValueError) as exc:
-                log.warning("Курс ЕЦБ не получен: %s", exc)
-                if self._rate is None:
+                log.warning("Курсы не получены: %s", exc)
+                if not self._rates:
                     self._load_saved()
-        return self._rate, self._source, self._as_of
+        return dict(self._rates), self._source, self._as_of
 
     def _load_saved(self) -> None:
         raw = self.storage.get_meta(FX_KEY)
@@ -184,11 +187,43 @@ class Rates:
             return
         try:
             data = json.loads(raw)
-            self._rate = Decimal(data["rate"])
-            self._as_of = datetime.fromisoformat(data["as_of"])
-            self._source = "сохранённый ЕЦБ"
-        except (ValueError, KeyError, TypeError, ArithmeticError):
+            if "rates" in data:
+                rates = {Currency(c): Decimal(r) for c, r in data["rates"].items()}
+            else:  # запись до курса рубля: только USD
+                rates = {Currency.USD: Decimal(data["rate"])}
+            if not all(r > 0 for r in rates.values()):
+                raise ValueError("курс не больше нуля")
+            as_of = datetime.fromisoformat(data["as_of"])
+        except (ValueError, KeyError, TypeError, AttributeError, ArithmeticError):
             log.warning("Сохранённый курс повреждён")
+            return
+        self._rates, self._as_of = rates, as_of
+        self._source = f"сохранённый {data.get('source') or 'ECB'}"
+
+
+def _check_former_currency(old: Trade, new: Trade) -> None:
+    """Не даёт молча перевести старую цену в новую валюту площадки.
+
+    Если площадка сменила валюту (Market.CSGO: EUR → RUB), а цену в записи не
+    поменяли, то 4.29 EUR стало бы 4.29 RUB. Такую цену нужно вписать заново.
+
+    Raises:
+        BadRequest: Если цена осталась прежней, а валюта площадки другая.
+    """
+    errors: dict[str, str] = {}
+    for leg in ("buy", "target", "sell"):
+        was, now = getattr(old, f"{leg}_currency"), getattr(new, f"{leg}_currency")
+        if was is None or now is None or was is now:
+            continue
+        price = getattr(new, f"{leg}_price")
+        same = (getattr(new, f"{leg}_market"), price) == (
+            getattr(old, f"{leg}_market"),
+            getattr(old, f"{leg}_price"),
+        )
+        if same:
+            errors[f"{leg}_price"] = f"было {price} {was.value}, впиши цену в {now.value}"
+    if errors:
+        raise BadRequest("Площадка теперь считает в другой валюте: впиши цены заново", errors)
 
 
 class App:
@@ -290,7 +325,7 @@ class App:
     def state(self) -> dict[str, Any]:
         """Площадки, игры, настройки сканера, курс и состояние фонового запуска."""
         saved = load_tuning(self.storage)
-        rate, source, as_of = self.rates.current()
+        rates, source, as_of = self.rates.current()
         return {
             "markets": [
                 {
@@ -308,8 +343,12 @@ class App:
             "settings_saved": saved is not None,
             "defaults": self.defaults.model_dump(mode="json"),
             "fx": None
-            if rate is None
-            else {"usd_per_eur": str(rate), "source": source, "as_of": _iso(as_of)},
+            if not rates
+            else {
+                "rates": {c.value: str(r) for c, r in rates.items()},
+                "source": source,
+                "as_of": _iso(as_of),
+            },
             "scanner": self.scanner_state(),
             "can_quit": self.quit is not None,
         }
@@ -370,25 +409,26 @@ class App:
 
     def journal(self) -> dict[str, Any]:
         """Все сделки с расчётом прибыли и сводка."""
-        rate, _, _ = self.rates.current()
-        views = [self._view(t, rate) for t in self.storage.trades()]
+        rates, _, _ = self.rates.current()
+        views = [self._view(t, rates) for t in self.storage.trades()]
         return {"trades": [v for v, _ in views], "summary": self._summary(views)}
 
     def create_trade(self, data: dict[str, Any]) -> dict[str, Any]:
         """Добавляет сделку в журнал."""
         now = self.clock()
-        rate, _, _ = self.rates.current()
+        rates, _, _ = self.rates.current()
         fields = self._input(data, sale=False)
         trade = self._validate(
             {
                 **fields,
                 "target_at": now,
-                "buy_usd_per_eur": rate,
+                "buy_usd_per_eur": rates.get(Currency.USD),
+                "buy_rub_per_eur": rates.get(Currency.RUB),
                 "created_at": now,
             }
         )
         trade_id = self.storage.save_trade(trade)
-        return self._view(trade.model_copy(update={"id": trade_id}), rate)[0]
+        return self._view(trade.model_copy(update={"id": trade_id}), rates)[0]
 
     def update_trade(self, trade_id: int, data: dict[str, Any]) -> dict[str, Any]:
         """Меняет сделку: исправление данных, новая текущая цена, продажа или её отмена."""
@@ -396,27 +436,30 @@ class App:
         if old is None:
             raise LookupError(f"Сделка {trade_id} не найдена")
         now = self.clock()
-        rate, _, _ = self.rates.current()
+        rates, _, _ = self.rates.current()
         fields = self._input(data, sale=True)
-        update: dict[str, Any] = {**old.model_dump(), **fields, "id": trade_id}
-        if (fields["target_market"], fields["target_price"]) != (
-            old.target_market,
-            old.target_price,
-        ):
+        # Сравниваем уже разобранные значения: «13» и «13.00» — одна цена.
+        new = self._validate({**old.model_dump(), **fields, "id": trade_id})
+        _check_former_currency(old, new)
+        update: dict[str, Any] = new.model_dump()
+        if (new.target_market, new.target_price) != (old.target_market, old.target_price):
             update["target_at"] = now
-        if update["buy_usd_per_eur"] is None:
-            update["buy_usd_per_eur"] = rate
-        if fields["sold_at"] is None:
-            update["sell_usd_per_eur"] = None
-        elif (fields["sell_market"], fields["sell_price"], fields["sold_at"]) != (
+        sale_changed = (new.sell_market, new.sell_price, new.sold_at) != (
             old.sell_market,
             old.sell_price,
             old.sold_at,
-        ) or old.sell_usd_per_eur is None:
-            update["sell_usd_per_eur"] = rate
+        )
+        for currency in (Currency.USD, Currency.RUB):
+            code = currency.value.lower()
+            if update[f"buy_{code}_per_eur"] is None:
+                update[f"buy_{code}_per_eur"] = rates.get(currency)
+            if new.sold_at is None:
+                update[f"sell_{code}_per_eur"] = None
+            elif sale_changed or update[f"sell_{code}_per_eur"] is None:
+                update[f"sell_{code}_per_eur"] = rates.get(currency)
         trade = self._validate(update)
         self.storage.save_trade(trade)
-        return self._view(trade, rate)[0]
+        return self._view(trade, rates)[0]
 
     def _input(self, data: dict[str, Any], sale: bool) -> dict[str, Any]:
         """Поля сделки из формы; валюты берутся из правил площадок."""
@@ -479,13 +522,15 @@ class App:
         except ValidationError as exc:
             raise _bad(exc, {"market_hash_name": "name"}) from exc
 
-    def _view(self, trade: Trade, rate: Decimal | None) -> tuple[dict[str, Any], Valuation | None]:
+    def _view(
+        self, trade: Trade, rates: dict[Currency, Decimal]
+    ) -> tuple[dict[str, Any], Valuation | None]:
         today = self.clock().date()
         unlock = tradable_from(trade, self.schedule)
         valuation: Valuation | None = None
         error = None
         try:
-            valuation = valuate(trade, self.schedule, rate, self.spread)
+            valuation = valuate(trade, self.schedule, rates, self.spread)
         except NoRate as exc:
             error = str(exc)
         except (KeyError, ValueError) as exc:
@@ -548,8 +593,11 @@ class App:
         """Последняя цена предмета на площадке по данным сканера (не старше 2 дней)."""
         if not name or not market:
             return None
+        currency = (
+            self.schedule.market(market).currency if market in self.schedule.marketplaces else None
+        )
         for q in self.storage.latest_quotes(name):
-            if q.source != market or q.min_price is None:
+            if q.source != market or q.min_price is None or q.currency is not currency:
                 continue
             if self.clock() - q.fetched_at > QUOTE_MAX_AGE:
                 return None

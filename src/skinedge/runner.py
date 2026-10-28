@@ -36,7 +36,6 @@ from html import escape
 from skinedge import feed
 from skinedge.fx import FxRates
 from skinedge.games import title
-from skinedge.money import Currency
 from skinedge.notify.message import format_paper_report
 from skinedge.notify.telegram import TelegramError
 from skinedge.paper import build_report
@@ -330,7 +329,7 @@ class Runner:
             )
             return self._fx
         self._fx, self._fx_at = fx, now
-        log.info("Курс: 1 EUR = %s USD (%s)", fx.rates[Currency.USD], fx.source)
+        log.info("Курс: %s (%s)", fx.describe(), fx.source)
         return fx
 
     # ---------- ежедневные дела ----------

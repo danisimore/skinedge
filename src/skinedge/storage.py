@@ -77,7 +77,8 @@ CREATE TABLE IF NOT EXISTS paper_trades (
     usd_per_eur TEXT,
     complete INTEGER NOT NULL,
     lock_days INTEGER NOT NULL,
-    model INTEGER NOT NULL DEFAULT 1
+    model INTEGER NOT NULL DEFAULT 1,
+    rub_per_eur TEXT
 );
 CREATE INDEX IF NOT EXISTS paper_route ON paper_trades (market_hash_name, buy_market, sell_market);
 
@@ -103,6 +104,7 @@ CREATE TABLE IF NOT EXISTS trades (
     buy_price TEXT NOT NULL,
     buy_currency TEXT NOT NULL,
     buy_usd_per_eur TEXT,
+    buy_rub_per_eur TEXT,
     target_market TEXT NOT NULL,
     target_price TEXT NOT NULL,
     target_currency TEXT NOT NULL,
@@ -112,6 +114,7 @@ CREATE TABLE IF NOT EXISTS trades (
     sell_price TEXT,
     sell_currency TEXT,
     sell_usd_per_eur TEXT,
+    sell_rub_per_eur TEXT,
     note TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL
 );
@@ -189,6 +192,7 @@ class Storage:
         columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(quotes)")}
         paper_columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(paper_trades)")}
         notify_columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(notifications)")}
+        trade_columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(trades)")}
         version = self.conn.execute("PRAGMA user_version").fetchone()[0]
         with self._tx() as c:
             if "best_bid" not in columns:
@@ -197,6 +201,12 @@ class Storage:
                 c.execute("ALTER TABLE quotes ADD COLUMN bid_quantity INTEGER")
             if "model" not in paper_columns:
                 c.execute("ALTER TABLE paper_trades ADD COLUMN model INTEGER NOT NULL DEFAULT 1")
+            # Курс рубля появился вместе с ценами Market.CSGO в RUB.
+            if "rub_per_eur" not in paper_columns:
+                c.execute("ALTER TABLE paper_trades ADD COLUMN rub_per_eur TEXT")
+            for column in ("buy_rub_per_eur", "sell_rub_per_eur"):
+                if column not in trade_columns:
+                    c.execute(f"ALTER TABLE trades ADD COLUMN {column} TEXT")
             if "app_id" not in notify_columns:
                 # До Dota 2 и Rust уведомления были только по CS2.
                 c.execute(
@@ -399,8 +409,8 @@ class Storage:
             cur = c.execute(
                 "INSERT INTO paper_trades (created_at, app_id, market_hash_name, buy_market,"
                 " sell_market, buy_price, buy_currency, sell_price, sell_currency, cost_eur,"
-                " proceeds_eur, profit_eur, roi, usd_per_eur, complete, lock_days, model)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " proceeds_eur, profit_eur, roi, usd_per_eur, complete, lock_days, model,"
+                " rub_per_eur) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     _t(trade.created_at),
                     trade.app_id,
@@ -419,6 +429,7 @@ class Storage:
                     int(trade.complete),
                     trade.lock_days,
                     trade.model,
+                    _d(trade.rub_per_eur),
                 ),
             )
         return int(cur.lastrowid or 0)
@@ -447,6 +458,7 @@ class Storage:
                 profit_eur=Decimal(r["profit_eur"]),
                 roi=Decimal(r["roi"]),
                 usd_per_eur=_pd(r["usd_per_eur"]),
+                rub_per_eur=_pd(r["rub_per_eur"]),
                 complete=bool(r["complete"]),
                 lock_days=r["lock_days"],
                 model=r["model"],
@@ -512,6 +524,7 @@ class Storage:
         "buy_price",
         "buy_currency",
         "buy_usd_per_eur",
+        "buy_rub_per_eur",
         "target_market",
         "target_price",
         "target_currency",
@@ -521,6 +534,7 @@ class Storage:
         "sell_price",
         "sell_currency",
         "sell_usd_per_eur",
+        "sell_rub_per_eur",
         "note",
         "created_at",
     )

@@ -4,7 +4,7 @@
 для каждой игры с одинаковым API: market.csgo.com (CS2), market.dota2.net (Dota 2)
 и rust.tm (Rust). Используются только публичные статические файлы:
 
-* ``/api/v2/prices/EUR.json`` — «Список цен (лучшие предложения)»: минимальная
+* ``/api/v2/prices/RUB.json`` — «Список цен (лучшие предложения)»: минимальная
   цена лота по каждому названию;
 * ``/api/v2/full-history/all.json`` — номер истории продаж по названию;
 * ``/api/v2/full-history/{id}.json`` — до 6000 последних продаж предмета.
@@ -12,8 +12,9 @@
 Проверено живыми запросами 27.10.2026 (в документации этого нет или пример другой):
 
 * все три сайта отвечают без ключа; прайс-лист — ``{"success": true, "time": ...,
-  "currency": "EUR", "items": [{"market_hash_name", "volume", "price"}]}``,
-  ``price`` и ``volume`` — строки, цена в евро с тремя знаками (``"10.706"``);
+  "currency": "RUB", "items": [{"market_hash_name", "volume", "price"}]}``,
+  ``price`` и ``volume`` — строки, цена в рублях с двумя знаками (``"899.00"``,
+  проверено 28.10.2026; в EUR.json цены с тремя знаками);
 * ``volume`` в документации не описан. Он не совпадает с числом продаж
   (у Prisma Case 1179 при 1677 продажах за 7 дней), поэтому считается числом лотов;
 * файл истории — ``{"time": ..., "data": {..., "history": [...]}}`` (история лежит
@@ -21,7 +22,9 @@
   ``[unix_time, цена_RUB, цена_USD, цена_EUR]``, свежие продажи первыми; каждая
   проданная штука — отдельная запись, массовые покупки дают одинаковое время.
 
-Цены берутся в евро: SkinEdge считает, что аккаунт Market.CSGO открыт в EUR.
+Цены берутся в рублях: валюта аккаунта Market.CSGO выбирается при регистрации,
+у пользователя это рубли. В EUR цены пересчитываются по курсу ЦБ РФ
+(:mod:`skinedge.sources.cbr`).
 Документация грозит удалить ключ за больше чем 5 запросов в секунду; адаптер
 делает не больше 2 запросов в секунду.
 """
@@ -51,10 +54,10 @@ from skinedge.sources.base import (
 log = logging.getLogger(__name__)
 
 HOSTS = {CS2: "https://market.csgo.com", DOTA2: "https://market.dota2.net", RUST: "https://rust.tm"}
-CURRENCY = Currency.EUR
+CURRENCY = Currency.RUB
 # Номера историй меняются только у новых предметов; all.json обновляется редко.
 INDEX_SECONDS = 6 * 3600.0
-_EUR = 3  # индекс цены в евро в записи истории
+_PRICE = 1  # индекс цены в рублях в записи истории (RUB, USD, EUR)
 
 
 def _host(app_id: int) -> str:
@@ -102,7 +105,7 @@ class MarketCSGOSource:
             raise SourceError(f"Market.CSGO {url}: ответ не JSON") from exc
 
     def fetch_quotes(self, app_id: int = CS2) -> list[Quote]:
-        """Минимальная цена лота по каждому предмету игры, в евро.
+        """Минимальная цена лота по каждому предмету игры, в рублях.
 
         В прайс-листе только предметы, у которых есть лоты.
 
@@ -114,7 +117,9 @@ class MarketCSGOSource:
         if not isinstance(data, dict) or data.get("success") is not True:
             raise SourceError(f"Market.CSGO {url}: ответ без success=true")
         if data.get("currency") != CURRENCY.value:
-            raise SourceError(f"Market.CSGO {url}: валюта {data.get('currency')!r}, ожидался EUR")
+            raise SourceError(
+                f"Market.CSGO {url}: валюта {data.get('currency')!r}, ожидался {CURRENCY.value}"
+            )
         rows = data.get("items")
         if not isinstance(rows, list):
             raise SourceError(f"Market.CSGO {url}: нет списка items")
@@ -188,7 +193,7 @@ class MarketCSGOSource:
         return ids
 
     def fetch_last_sales(self, title: str, app_id: int = CS2) -> list[Sale]:
-        """Последние продажи предмета (до 6000), свежие первыми, цены в евро.
+        """Последние продажи предмета (до 6000), свежие первыми, цены в рублях.
 
         Returns:
             Продажи; пустой список, если у предмета нет истории.
@@ -219,7 +224,7 @@ class MarketCSGOSource:
                         app_id=app_id,
                         market_hash_name=title,
                         currency=CURRENCY,
-                        price=positive_price(row[_EUR]),
+                        price=positive_price(row[_PRICE]),
                         sold_at=datetime.fromtimestamp(stamp, tz=UTC),
                         fetched_at=fetched_at,
                     )

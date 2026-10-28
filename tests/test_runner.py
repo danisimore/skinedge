@@ -343,7 +343,8 @@ def test_cli_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TG_BOT_TOKEN", TOKEN)
     monkeypatch.setenv("TG_CHAT_ID", "777")
 
-    args = ["run", "--iterations", "1", "--usd-per-eur", "1.10", "--limit", "2", "--no-report"]
+    args = ["run", "--iterations", "1", "--usd-per-eur", "1.10", "--rub-per-eur", "90"]
+    args += ["--limit", "2", "--no-report"]
     args += ["--no-marketcsgo", "--no-lisskins"]  # без сети
     result = CliRunner().invoke(app, args)
     assert result.exit_code == 0, result.output

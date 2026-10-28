@@ -6,54 +6,40 @@
 <title>SkinEdge</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Rubik:wght@500;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Onest:wght@400;500;600;700&family=Unbounded:wght@500;600;700&display=swap">
 <style>
-/* Раскладка: шапка со статусом сканера и вкладки. «Сканер» — панель запуска и карточки
-   найденных сделок; «Журнал» — сводка из четырёх плиток, форма покупки и таблица сделок.
-   Акцент — синий Mil-Spec из шкалы редкости CS2. */
+/* Облик: «ночной рынок». Тёплый почти чёрный фон, по которому медленно плывут три
+   пятна неонового света (оранжевое, малиновое, фиолетовое), сетка терминала и зерно.
+   Панели полупрозрачные. Цвет карточки сделки — по ROI, как шкала редкости CS2:
+   Mil-Spec, Restricted, Classified, Covert и золото для самых выгодных. */
 :root {
-  --bg: #f2f4f9;
-  --surface: #ffffff;
-  --surface-2: #f7f8fc;
-  --ink: #141a2e;
-  --ink-2: #474f6b;
-  --muted: #737a95;
-  --line: #dde1ec;
-  --line-strong: #c5cbdc;
-  --accent: #3550e0;
-  --accent-ink: #ffffff;
-  --accent-soft: #e8ecff;
-  --good: #0b7a3b;
-  --good-soft: #e3f4ea;
-  --bad: #c0352f;
-  --bad-soft: #fbe9e8;
-  --warn: #8a5a00;
-  --warn-soft: #fbf0d9;
-  --shadow: 0 1px 2px rgba(20, 26, 46, 0.06), 0 8px 24px rgba(20, 26, 46, 0.06);
-  --font-display: "Rubik", "Segoe UI", system-ui, sans-serif;
-  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
-  --font-data: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
-  --radius: 10px;
-  --art-bg: #e9edf7;
-  --art-glow: rgba(53, 80, 224, 0.2);
-  color-scheme: light;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg: #0d111d; --surface: #151a2a; --surface-2: #1a2034; --ink: #e8ebf6; --ink-2: #b3bad2;
-    --muted: #7f87a6; --line: #262d45; --line-strong: #353d5a; --accent: #8096ff; --accent-ink: #0d111d;
-    --accent-soft: #1f2753; --good: #4fd08a; --good-soft: #12301f; --bad: #ff8a80; --bad-soft: #3a1717;
-    --warn: #f0b74e; --warn-soft: #33270f; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.25);
-    --art-bg: #0f1425; --art-glow: rgba(128, 150, 255, 0.26);
-    color-scheme: dark;
-  }
-}
-:root[data-theme="dark"] {
-  --bg: #0d111d; --surface: #151a2a; --surface-2: #1a2034; --ink: #e8ebf6; --ink-2: #b3bad2;
-  --muted: #7f87a6; --line: #262d45; --line-strong: #353d5a; --accent: #8096ff; --accent-ink: #0d111d;
-  --accent-soft: #1f2753; --good: #4fd08a; --good-soft: #12301f; --bad: #ff8a80; --bad-soft: #3a1717;
-  --warn: #f0b74e; --warn-soft: #33270f; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.25);
-  --art-bg: #0f1425; --art-glow: rgba(128, 150, 255, 0.26);
+  --bg: #0a080e;
+  --panel: rgba(22, 17, 30, 0.78);
+  --panel-2: rgba(34, 27, 46, 0.6);
+  --panel-solid: #16111e;
+  --field: rgba(10, 8, 14, 0.6);
+  --line: rgba(255, 240, 230, 0.08);
+  --line-strong: rgba(255, 240, 230, 0.16);
+  --ink: #f7f1ea;
+  --ink-2: #cbc2d4;
+  --muted: #8f87a1;
+  --orange: #ff8a1f;
+  --pink: #ff3d7f;
+  --violet: #9b5cff;
+  --grad: linear-gradient(110deg, #ffae2b 0%, #ff5e3a 30%, #ff3d7f 62%, #a35cff 100%);
+  --accent: #ff8a4c;
+  --accent-ink: #1a0f08;
+  --good: #b9ff45;
+  --good-soft: rgba(185, 255, 69, 0.12);
+  --bad: #ff5d6e;
+  --bad-soft: rgba(255, 93, 110, 0.14);
+  --warn: #ffc94d;
+  --warn-soft: rgba(255, 201, 77, 0.12);
+  --shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 20px 50px -24px rgba(0, 0, 0, 0.8);
+  --font-display: "Unbounded", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Onest", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-data: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --radius: 16px;
   color-scheme: dark;
 }
 
@@ -65,231 +51,323 @@ body {
   color: var(--ink);
   font: 15px/1.5 var(--font-body);
   -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
 }
+::selection { background: rgba(255, 61, 127, 0.4); }
 .wrap {
-  max-width: 1180px;
+  max-width: 1240px;
   margin: 0 auto;
   padding-left: max(16px, env(safe-area-inset-left, 0px));
   padding-right: max(16px, env(safe-area-inset-right, 0px));
 }
 h1, h2, h3 { font-family: var(--font-display); font-weight: 600; margin: 0; text-wrap: balance; }
-h2 { font-size: 1.25rem; letter-spacing: -0.01em; }
+h2 { font-size: 1.15rem; letter-spacing: -0.01em; }
 h3 { font-size: 1rem; }
 .num { font-family: var(--font-data); font-variant-numeric: tabular-nums; }
 .muted { color: var(--muted); }
 .small { font-size: 0.85rem; }
 a { color: var(--accent); }
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+:focus-visible { outline: 2px solid var(--pink); outline-offset: 2px; border-radius: 6px; }
+
+/* ---------- живой фон ---------- */
+.bg { position: fixed; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; background: var(--bg); }
+.bg i { position: absolute; width: 70vmax; height: 70vmax; border-radius: 50%; will-change: transform; }
+.bg i:nth-child(1) { left: -22vmax; top: -30vmax; background: radial-gradient(circle, rgba(255, 128, 24, 0.30), transparent 62%); }
+.bg i:nth-child(2) { right: -28vmax; top: -6vmax; background: radial-gradient(circle, rgba(255, 50, 120, 0.24), transparent 62%); }
+.bg i:nth-child(3) { left: 8vmax; bottom: -42vmax; background: radial-gradient(circle, rgba(140, 80, 255, 0.28), transparent 62%); }
+.bg::before {
+  content: ""; position: absolute; inset: -48px;
+  background-image: linear-gradient(rgba(255, 240, 230, 0.035) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 240, 230, 0.035) 1px, transparent 1px);
+  background-size: 48px 48px;
+  -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 10%, transparent 75%);
+  mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 10%, transparent 75%);
+}
+.bg::after {
+  content: ""; position: absolute; inset: 0; opacity: 0.06; mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
 
 /* ---------- шапка ---------- */
 .top {
   position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5;
-  background: var(--surface);
+  background: rgba(10, 8, 14, 0.72);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  backdrop-filter: blur(14px) saturate(140%);
   border-bottom: 1px solid var(--line);
 }
-body::before {
-  content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px);
-  z-index: 10; background: var(--surface);
-}
-.top .wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; padding-block: 12px; }
-.brand { display: flex; align-items: baseline; gap: 10px; }
-.brand h1 { font-size: 1.35rem; letter-spacing: -0.02em; }
-.brand h1 span { color: var(--accent); }
-.brand .tag { font-size: 0.8rem; color: var(--muted); }
-.status { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin-left: auto; font-size: 0.85rem; color: var(--ink-2); }
-.pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; font-size: 0.8rem; font-weight: 500; white-space: nowrap; }
+.top::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 1px; background: var(--grad); opacity: 0.55; }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bg); }
+.top .wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; padding-block: 14px 0; }
+.brand { display: flex; align-items: center; gap: 12px; }
+.brand h1 { font-size: 1.3rem; font-weight: 700; letter-spacing: 0.02em; text-transform: uppercase; }
+.brand h1 span { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.brand .tag { font-size: 0.78rem; color: var(--muted); }
+.logo { width: 30px; height: 30px; flex: none; }
+.status { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-left: auto; font-size: 0.82rem; color: var(--ink-2); }
+.status .num { color: var(--ink-2); }
+.pill { display: inline-flex; align-items: center; gap: 7px; padding: 4px 11px; border-radius: 999px; font-size: 0.78rem; font-weight: 600; white-space: nowrap; border: 1px solid var(--line-strong); background: rgba(255, 255, 255, 0.04); color: var(--ink-2); }
 .pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
-.pill.ok { color: var(--good); background: var(--good-soft); }
-.pill.off { color: var(--ink-2); background: var(--surface-2); border: 1px solid var(--line); }
-.pill.warn { color: var(--warn); background: var(--warn-soft); }
+.pill.ok { color: var(--good); border-color: rgba(185, 255, 69, 0.3); background: var(--good-soft); }
+.pill.ok::before { box-shadow: 0 0 10px currentColor; }
+.pill.warn { color: var(--warn); border-color: rgba(255, 201, 77, 0.3); background: var(--warn-soft); }
 a.pill { text-decoration: none; }
-.tabs { display: flex; gap: 4px; width: 100%; margin-bottom: -13px; }
+.tabs { display: flex; gap: 6px; width: 100%; padding-block: 4px 12px; overflow-x: auto; }
 .tabs a {
-  padding: 8px 14px; text-decoration: none; color: var(--ink-2); font-weight: 500;
-  border-bottom: 2px solid transparent;
+  padding: 7px 16px; text-decoration: none; color: var(--ink-2); font-weight: 500; font-size: 0.92rem;
+  border-radius: 999px; border: 1px solid transparent; white-space: nowrap;
 }
-.tabs a[aria-current="page"] { color: var(--ink); border-color: var(--accent); }
-.tabs a:hover { color: var(--ink); }
+.tabs a:hover { color: var(--ink); background: rgba(255, 255, 255, 0.04); }
+.tabs a[aria-current="page"] {
+  color: var(--ink); border-color: rgba(255, 94, 58, 0.45);
+  background: linear-gradient(110deg, rgba(255, 138, 31, 0.16), rgba(255, 61, 127, 0.14) 60%, rgba(163, 92, 255, 0.14));
+  box-shadow: 0 0 24px -8px rgba(255, 61, 127, 0.6);
+}
 
-main .wrap { display: grid; gap: 24px; padding-block: 24px 48px; }
+main .wrap { display: grid; gap: 22px; padding-block: 26px 56px; }
 main .wrap > * { min-width: 0; }
 
 /* ---------- сводка ---------- */
-.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
-.kpi { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; display: grid; gap: 4px; align-content: start; }
-.kpi .label { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 500; }
-.kpi .value { font-family: var(--font-display); font-size: 1.7rem; font-weight: 600; letter-spacing: -0.02em; line-height: 1.2; }
-.kpi .value small { font-size: 0.9rem; font-weight: 500; color: var(--muted); margin-left: 4px; }
-.kpi .sub { font-size: 0.85rem; color: var(--ink-2); }
-.pos { color: var(--good); }
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.kpi { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; display: grid; gap: 6px; align-content: start; box-shadow: var(--shadow); }
+.kpi .label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); font-weight: 600; }
+.kpi .value { font-family: var(--font-display); font-size: 1.55rem; font-weight: 600; letter-spacing: -0.02em; line-height: 1.2; }
+.kpi .value small { font-family: var(--font-body); font-size: 0.85rem; font-weight: 500; color: var(--muted); margin-left: 5px; }
+.kpi .sub { font-size: 0.84rem; color: var(--ink-2); }
+.pos { color: var(--good); text-shadow: 0 0 18px rgba(185, 255, 69, 0.25); }
 .neg { color: var(--bad); }
-.note { font-size: 0.85rem; color: var(--warn); background: var(--warn-soft); border-radius: 8px; padding: 8px 12px; }
+.note { font-size: 0.85rem; color: var(--warn); background: var(--warn-soft); border: 1px solid rgba(255, 201, 77, 0.2); border-radius: 10px; padding: 9px 12px; }
 
 /* ---------- панели и формы ---------- */
-.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
-.panel > header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 16px; padding: 16px 20px 0; }
-.panel > .body { padding: 16px 20px 20px; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+.panel > header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 16px; padding: 18px 22px 0; }
+.panel > .body { padding: 16px 22px 22px; }
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px 16px; }
 .grid .wide { grid-column: span 2; }
 fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
-legend { font-family: var(--font-display); font-weight: 600; padding: 0; margin-bottom: 10px; }
-.field { display: grid; gap: 5px; min-width: 0; align-content: start; }
-.field label { font-size: 0.82rem; font-weight: 500; color: var(--ink-2); }
-.field .help { font-size: 0.8rem; color: var(--muted); }
+legend { font-family: var(--font-display); font-weight: 600; font-size: 0.92rem; padding: 0; margin-bottom: 12px; }
+.field { display: grid; gap: 6px; min-width: 0; align-content: start; }
+.field label { font-size: 0.8rem; font-weight: 500; color: var(--ink-2); }
+.field .help { font-size: 0.78rem; color: var(--muted); }
 .field .err { font-size: 0.8rem; color: var(--bad); }
 .field .err:empty { display: none; }
 input, select, textarea {
-  font: inherit; color: var(--ink); background: var(--surface-2);
-  border: 1px solid var(--line-strong); border-radius: 8px; padding: 8px 10px; width: 100%; min-width: 0;
+  font: inherit; color: var(--ink); background: var(--field);
+  border: 1px solid var(--line-strong); border-radius: 10px; padding: 9px 11px; width: 100%; min-width: 0;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
-input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: transparent; }
+select option { background: var(--panel-solid); color: var(--ink); }
+input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.85); }
+input:hover, select:hover, textarea:hover { border-color: rgba(255, 240, 230, 0.26); }
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(255, 94, 58, 0.22); }
 .invalid input, .invalid select { border-color: var(--bad); }
 textarea { resize: vertical; min-height: 40px; }
 .money { position: relative; }
 .money input { padding-right: 52px; font-family: var(--font-data); }
-.money .cur { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-family: var(--font-data); font-size: 0.8rem; color: var(--muted); pointer-events: none; }
+.money .cur { position: absolute; right: 11px; top: 50%; transform: translateY(-50%); font-family: var(--font-data); font-size: 0.78rem; color: var(--muted); pointer-events: none; }
 .hint { font-size: 0.8rem; color: var(--ink-2); display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
 .hint:empty { display: none; }
-.linkbtn { background: none; border: 0; padding: 0; font: inherit; color: var(--accent); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.linkbtn { background: none; border: 0; padding: 0; font: inherit; color: var(--accent); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
 .actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 18px; }
-button.btn {
-  font: inherit; font-weight: 600; border-radius: 8px; padding: 9px 16px; cursor: pointer;
-  border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink);
+button.btn, a.btn {
+  font: inherit; font-weight: 600; border-radius: 12px; padding: 10px 18px; cursor: pointer; text-decoration: none;
+  border: 1px solid var(--line-strong); background: rgba(255, 255, 255, 0.04); color: var(--ink);
+  transition: transform 0.15s, border-color 0.15s, background 0.15s, box-shadow 0.2s;
 }
-button.btn:hover { border-color: var(--ink-2); }
-button.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
-button.btn.primary:hover { filter: brightness(1.08); }
+button.btn:hover { border-color: rgba(255, 240, 230, 0.32); background: rgba(255, 255, 255, 0.07); }
+button.btn:active { transform: translateY(1px); }
+button.btn.primary {
+  border: 0; color: #fff; background: var(--grad); background-size: 160% 100%; background-position: 0 0;
+  box-shadow: 0 10px 30px -10px rgba(255, 61, 127, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.08) inset;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+button.btn.primary:hover { background-position: 100% 0; box-shadow: 0 14px 36px -10px rgba(255, 61, 127, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.14) inset; }
 button.btn.danger { color: var(--bad); }
-button.btn.small { padding: 5px 10px; font-size: 0.85rem; }
+button.btn.small { padding: 6px 12px; font-size: 0.85rem; border-radius: 10px; }
 button.btn.ghost { background: transparent; border-color: transparent; color: var(--ink-2); font-weight: 500; }
 button.btn.ghost:hover { border-color: var(--line-strong); color: var(--ink); }
-button.btn.ghost.armed { color: var(--bad); border-color: var(--bad); }
-.btn svg { width: 15px; height: 15px; vertical-align: -2px; margin-right: 6px; }
-button:disabled { opacity: 0.6; cursor: progress; }
+button.btn.ghost.armed { color: var(--bad); border-color: var(--bad); background: var(--bad-soft); }
+.btn svg { width: 14px; height: 14px; vertical-align: -2px; margin-right: 7px; }
+button:disabled { opacity: 0.55; cursor: progress; }
 
 /* ---------- таблица сделок ---------- */
 .ledger-wrap { overflow-x: auto; }
 table.ledger { width: 100%; border-collapse: collapse; min-width: 760px; }
-.ledger th { text-align: left; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 500; padding: 10px 12px; border-bottom: 1px solid var(--line); }
-.ledger td { padding: 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.ledger th { text-align: left; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); font-weight: 600; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.ledger td { padding: 13px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
 .ledger th.r, .ledger td.r { text-align: right; }
-.ledger tr.row { cursor: pointer; }
-.ledger tr.row:hover td { background: var(--surface-2); }
-.ledger tr.row.open td { background: var(--surface-2); border-bottom-color: transparent; }
+.ledger tr.row { cursor: pointer; transition: background 0.15s; }
+.ledger tr.row:hover td { background: rgba(255, 255, 255, 0.03); }
+.ledger tr.row.open td { background: rgba(255, 255, 255, 0.045); border-bottom-color: transparent; }
 .item-name { font-weight: 600; }
-.game { display: inline-block; font-size: 0.72rem; font-weight: 600; letter-spacing: 0.04em; color: var(--accent); background: var(--accent-soft); border-radius: 4px; padding: 1px 6px; margin-right: 6px; }
-.sub-line { font-size: 0.82rem; color: var(--muted); }
-.chip { display: inline-flex; align-items: center; gap: 5px; font-size: 0.78rem; font-weight: 500; border-radius: 6px; padding: 2px 8px; white-space: nowrap; }
+.game { display: inline-block; font-family: var(--font-data); font-size: 0.68rem; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-2); border: 1px solid var(--line-strong); background: rgba(10, 8, 14, 0.55); border-radius: 6px; padding: 1px 7px; margin-right: 7px; }
+.sub-line { font-size: 0.8rem; color: var(--muted); }
+.chip { display: inline-flex; align-items: center; gap: 5px; font-size: 0.76rem; font-weight: 500; border-radius: 8px; padding: 2px 8px; white-space: nowrap; border: 1px solid transparent; }
 .chip svg { width: 12px; height: 12px; flex: none; }
-.chip.locked { color: var(--ink-2); background: var(--surface-2); border: 1px solid var(--line); }
+.chip.locked { color: var(--ink-2); background: rgba(255, 255, 255, 0.04); border-color: var(--line); }
 .chip.tradable { color: var(--good); background: var(--good-soft); }
-.chip.sold { color: var(--accent); background: var(--accent-soft); }
+.chip.sold { color: #d6b8ff; background: rgba(155, 92, 255, 0.16); }
 .chip.warn { color: var(--warn); background: var(--warn-soft); }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .profit { font-family: var(--font-data); font-variant-numeric: tabular-nums; font-weight: 500; white-space: nowrap; }
-.detail td { background: var(--surface-2); padding: 4px 12px 18px; }
+.detail td { background: rgba(255, 255, 255, 0.045); padding: 4px 12px 18px; }
 .detail-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 16px 28px; }
-.calc { display: grid; gap: 2px; font-size: 0.85rem; }
+.calc { display: grid; gap: 3px; font-size: 0.85rem; }
 .calc div { display: flex; justify-content: space-between; gap: 12px; }
-.calc .total { border-top: 1px solid var(--line); margin-top: 6px; padding-top: 6px; font-weight: 600; }
+.calc .total { border-top: 1px solid var(--line-strong); margin-top: 6px; padding-top: 6px; font-weight: 600; }
 .calc span:last-child { font-family: var(--font-data); white-space: nowrap; }
 ul.warnings { margin: 8px 0 0; padding-left: 18px; font-size: 0.82rem; color: var(--warn); }
-.empty { padding: 36px 20px; text-align: center; color: var(--ink-2); display: grid; gap: 6px; justify-items: center; }
-.empty strong { font-family: var(--font-display); font-size: 1.05rem; color: var(--ink); }
+.empty { padding: 40px 22px; text-align: center; color: var(--ink-2); display: grid; gap: 8px; justify-items: center; }
+.empty strong { font-family: var(--font-display); font-size: 1rem; font-weight: 600; color: var(--ink); }
+.empty .btn { margin-top: 10px; }
 .filters { display: flex; gap: 6px; flex-wrap: wrap; }
-.filters button { font: inherit; font-size: 0.85rem; padding: 4px 12px; border-radius: 999px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink-2); cursor: pointer; }
-.filters button[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: var(--surface); }
+.filters button { font: inherit; font-size: 0.84rem; padding: 5px 13px; border-radius: 999px; border: 1px solid var(--line-strong); background: rgba(255, 255, 255, 0.03); color: var(--ink-2); cursor: pointer; }
+.filters button:hover { color: var(--ink); border-color: rgba(255, 240, 230, 0.3); }
+.filters button[aria-pressed="true"] { color: #fff; border-color: transparent; background: var(--grad); }
+.filters button[aria-pressed="true"] .muted { color: rgba(255, 255, 255, 0.8); }
 
 /* ---------- настройки ---------- */
-.settings { display: grid; gap: 22px; max-width: 760px; }
-.state-line { font-size: 0.88rem; color: var(--ink-2); }
+.settings { display: grid; gap: 24px; max-width: 780px; }
+.state-line { font-size: 0.86rem; color: var(--ink-2); }
 .state-line strong { color: var(--ink); }
 
 /* ---------- сканер ---------- */
-.runbar { position: relative; overflow: hidden; display: grid; gap: 10px; padding: 18px 20px; }
-.runbar .row1 { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; }
-.runbar .state { display: flex; align-items: center; gap: 10px; font-family: var(--font-display); font-weight: 600; font-size: 1.15rem; }
-.runbar .row1 .btn { margin-left: auto; }
-.runbar .last { font-size: 0.88rem; color: var(--ink-2); }
-.runbar .note { margin: 0; }
-.runbar .note.bad { color: var(--bad); background: var(--bad-soft); }
-.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: none; }
-.dot.on { background: var(--good); box-shadow: 0 0 0 4px var(--good-soft); }
-.dot.busy { background: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
-.dot.warn { background: var(--warn); box-shadow: 0 0 0 4px var(--warn-soft); }
-.sweep { position: absolute; inset: 0 0 auto; height: 3px; background: linear-gradient(90deg, transparent, var(--accent), transparent) no-repeat; background-size: 40% 100%; }
+.runbar { position: relative; overflow: hidden; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 14px 22px; padding: 22px 24px; }
+.runbar.live { border-color: rgba(185, 255, 69, 0.22); }
+.runbar.busy { border-color: rgba(255, 138, 31, 0.35); }
+.runbar .info { display: grid; gap: 4px; min-width: 0; }
+.runbar .state { font-family: var(--font-display); font-weight: 600; font-size: 1.2rem; letter-spacing: -0.01em; }
+.runbar .last { font-size: 0.86rem; color: var(--ink-2); }
+.runbar .note { margin: 4px 0 0; }
+.runbar .note.bad { color: var(--bad); background: var(--bad-soft); border-color: rgba(255, 93, 110, 0.25); }
+.runbar .act { display: flex; gap: 10px; align-items: center; }
+.runbar .act .btn.primary { padding: 13px 22px; font-size: 1rem; }
+.countdown { font-family: var(--font-data); font-size: 1.6rem; font-weight: 500; letter-spacing: 0.02em; color: var(--ink); }
+.countdown-wrap { display: grid; justify-items: end; gap: 2px; }
+.countdown-wrap small { font-size: 0.68rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.dial { --p: 0; --c: var(--muted); position: relative; width: 58px; height: 58px; border-radius: 50%; flex: none; display: grid; place-items: center;
+  background: conic-gradient(var(--c) calc(var(--p) * 1turn), rgba(255, 255, 255, 0.07) 0); }
+.dial::before { content: ""; position: absolute; inset: 5px; border-radius: 50%; background: var(--panel-solid); }
+.dial::after { content: ""; position: relative; width: 12px; height: 12px; border-radius: 50%; background: var(--c); box-shadow: 0 0 14px var(--c); }
+.dial.idle { --p: 1; --c: #5a536a; }
+.dial.idle::after { box-shadow: none; }
+.dial.live { --c: var(--good); }
+.dial.warn { --p: 1; --c: var(--warn); }
+.radar { position: relative; width: 58px; height: 58px; border-radius: 50%; flex: none; overflow: hidden;
+  border: 1px solid rgba(255, 138, 31, 0.45);
+  background: repeating-radial-gradient(circle, transparent 0 8px, rgba(255, 138, 31, 0.16) 8px 9px), rgba(255, 138, 31, 0.05); }
+.radar::before { content: ""; position: absolute; inset: 0; background: linear-gradient(rgba(255, 138, 31, 0.2), rgba(255, 138, 31, 0.2)) 50% 0 / 1px 100% no-repeat, linear-gradient(rgba(255, 138, 31, 0.2), rgba(255, 138, 31, 0.2)) 0 50% / 100% 1px no-repeat; }
+.radar::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: conic-gradient(from 0deg, transparent 0 250deg, rgba(255, 138, 31, 0.15) 300deg, rgba(255, 174, 43, 0.85) 360deg); }
 .section-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; }
+.section-head h2 { font-size: 1.3rem; }
+.section-head h2 .count { font-family: var(--font-data); font-size: 0.9rem; font-weight: 500; color: var(--muted); margin-left: 8px; }
 .section-head .tools { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
-.section-head select { width: auto; padding: 4px 8px; font-size: 0.85rem; }
+.section-head select { width: auto; padding: 5px 9px; font-size: 0.84rem; }
 
 /* ---------- карточки сделок ---------- */
-.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 292px), 1fr)); gap: 16px; }
-.deal { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; box-shadow: var(--shadow); min-width: 0; }
-.deal .art { position: relative; height: 148px; display: grid; place-items: center; background: radial-gradient(110% 85% at 50% 100%, var(--art-glow), transparent 72%), var(--art-bg); border-bottom: 1px solid var(--line); }
-.deal .art img { max-width: 80%; max-height: 124px; object-fit: contain; filter: drop-shadow(0 8px 12px rgba(10, 14, 28, 0.28)); }
-.deal .art .ph { width: 52px; height: 52px; color: var(--muted); opacity: 0.55; }
-.deal .badges { position: absolute; top: 10px; left: 10px; right: 10px; display: flex; justify-content: space-between; align-items: start; gap: 6px; }
-.badge-new { font-size: 0.72rem; font-weight: 600; letter-spacing: 0.04em; color: var(--accent-ink); background: var(--accent); border-radius: 4px; padding: 1px 7px; }
-.deal .content { padding: 14px 16px 12px; display: grid; gap: 12px; align-content: start; flex: 1; }
-.deal-name { font-weight: 600; font-size: 1rem; line-height: 1.3; margin: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-height: 2.6em; overflow-wrap: anywhere; }
-.route { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 8px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 296px), 1fr)); gap: 18px; }
+.deal {
+  --tier: #4b69ff; --tier-soft: rgba(75, 105, 255, 0.3); --tier-ink: #9fb0ff;
+  position: relative; display: flex; flex-direction: column; min-width: 0; overflow: hidden;
+  background: linear-gradient(180deg, rgba(30, 24, 41, 0.9), rgba(16, 12, 22, 0.94));
+  border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow);
+  transition: transform 0.25s ease, border-color 0.25s, box-shadow 0.25s;
+}
+.deal.t-restricted { --tier: #8847ff; --tier-soft: rgba(136, 71, 255, 0.32); --tier-ink: #c2a3ff; }
+.deal.t-classified { --tier: #d32ce6; --tier-soft: rgba(211, 44, 230, 0.3); --tier-ink: #f29cff; }
+.deal.t-covert { --tier: #eb4b4b; --tier-soft: rgba(235, 75, 75, 0.32); --tier-ink: #ff9d9d; }
+.deal.t-gold { --tier: #ffbf36; --tier-soft: rgba(255, 191, 54, 0.32); --tier-ink: #ffd879; }
+.deal::before { content: ""; position: absolute; inset: 0 0 auto; height: 3px; z-index: 1; background: linear-gradient(90deg, transparent, var(--tier) 25%, var(--tier) 75%, transparent); }
+.deal:hover { transform: translateY(-4px); border-color: var(--tier-soft); box-shadow: 0 24px 50px -24px var(--tier), 0 0 0 1px var(--tier-soft); }
+.deal .art {
+  position: relative; height: 160px; display: grid; place-items: center; overflow: hidden;
+  background: radial-gradient(60% 75% at 50% 100%, var(--tier-soft), transparent 72%), linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(0, 0, 0, 0.2));
+  border-bottom: 1px solid var(--line);
+}
+.deal .art::after { content: ""; position: absolute; left: 18%; right: 18%; bottom: 18px; height: 1px; background: linear-gradient(90deg, transparent, var(--tier), transparent); opacity: 0.6; }
+.deal .art img { position: relative; z-index: 1; max-width: 80%; max-height: 128px; object-fit: contain; filter: drop-shadow(0 10px 14px rgba(0, 0, 0, 0.55)); transition: transform 0.35s ease; }
+.deal:hover .art img { transform: scale(1.07) rotate(-3deg); }
+.deal .art .ph { width: 52px; height: 52px; color: var(--tier-ink); opacity: 0.45; }
+.deal .badges { position: absolute; top: 12px; left: 12px; right: 12px; z-index: 2; display: flex; justify-content: space-between; align-items: start; gap: 6px; }
+.badge-new { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #fff; background: var(--grad); border-radius: 6px; padding: 2px 8px; box-shadow: 0 0 18px -2px rgba(255, 61, 127, 0.7); }
+.deal .content { padding: 16px 18px 12px; display: grid; gap: 13px; align-content: start; flex: 1; }
+.deal-name { font-family: var(--font-body); font-weight: 600; font-size: 1.02rem; line-height: 1.3; margin: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-height: 2.6em; overflow-wrap: anywhere; }
+.route { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 8px; background: rgba(8, 6, 12, 0.55); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
 .leg { display: grid; gap: 1px; min-width: 0; }
 .leg.sell { text-align: right; }
-.leg .k { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); font-weight: 500; }
+.leg .k { font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.14em; color: var(--muted); font-weight: 600; }
 .leg .m { font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-decoration: none; }
-.leg a.m:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.leg a.m:hover { color: var(--tier-ink); text-decoration: underline; text-underline-offset: 3px; }
 .leg a.m::after { content: " ↗"; font-weight: 400; color: var(--muted); }
-.leg .p { font-family: var(--font-data); font-size: 0.9rem; color: var(--ink-2); white-space: nowrap; }
-.route .arrow { width: 18px; height: 18px; color: var(--muted); }
-.gain { display: flex; align-items: baseline; justify-content: space-between; gap: 6px 10px; flex-wrap: wrap; }
-.gain .big { font-family: var(--font-display); font-size: 1.45rem; font-weight: 600; letter-spacing: -0.01em; line-height: 1.2; white-space: nowrap; }
-.gain .big small { font-size: 0.85rem; font-weight: 500; color: var(--muted); margin-left: 4px; }
-.gain .roi { font-family: var(--font-data); font-size: 0.85rem; font-weight: 500; border-radius: 6px; padding: 2px 8px; color: var(--good); background: var(--good-soft); white-space: nowrap; }
-.deal-meta { font-size: 0.8rem; color: var(--muted); display: grid; gap: 2px; }
+.leg .p { font-family: var(--font-data); font-size: 0.86rem; color: var(--ink-2); white-space: nowrap; }
+.route .arrow { width: 22px; height: 22px; color: var(--tier-ink); }
+.gain { display: flex; align-items: center; justify-content: space-between; gap: 6px 10px; flex-wrap: wrap; }
+.gain .big { font-family: var(--font-display); font-size: 1.5rem; font-weight: 600; letter-spacing: -0.02em; line-height: 1.15; white-space: nowrap; }
+.gain .big small { font-family: var(--font-body); font-size: 0.8rem; font-weight: 500; color: var(--muted); margin-left: 5px; text-shadow: none; }
+.gain .roi { font-family: var(--font-data); font-size: 0.82rem; font-weight: 500; border-radius: 8px; padding: 3px 9px; color: var(--tier-ink); background: var(--tier-soft); border: 1px solid var(--tier-soft); white-space: nowrap; }
+.deal-meta { font-size: 0.78rem; color: var(--muted); display: grid; gap: 3px; }
 .deal-meta .flag { color: var(--warn); }
-.deal-actions { padding: 0 16px 16px; }
+.deal-actions { padding: 0 18px 18px; }
 .deal-actions .btn { width: 100%; }
-.empty .btn { margin-top: 8px; }
+.deal-actions .btn:hover { border-color: var(--tier-soft); background: var(--tier-soft); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 0.78rem; color: var(--muted); align-items: center; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
 
 /* ---------- выключено ---------- */
-.offline { background: var(--warn-soft); color: var(--warn); border-bottom: 1px solid var(--line); }
+.offline { background: rgba(255, 201, 77, 0.12); color: var(--warn); border-bottom: 1px solid rgba(255, 201, 77, 0.25); }
 .offline .wrap { padding-block: 10px; font-size: 0.9rem; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .offline strong { color: var(--ink); }
 
 /* ---------- диалог и уведомления ---------- */
-dialog { border: 0; border-radius: 14px; padding: 0; width: min(720px, calc(100vw - 32px)); background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
-dialog::backdrop { background: rgba(10, 14, 28, 0.45); }
-dialog header { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 18px 20px 0; }
-dialog .body { padding: 16px 20px 20px; display: grid; gap: 20px; }
-.toast { position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--ink); color: var(--surface); padding: 10px 16px; border-radius: 8px; font-size: 0.9rem; box-shadow: var(--shadow); z-index: 20; max-width: calc(100vw - 32px); }
-.toast.bad { background: var(--bad); color: #fff; }
+dialog { border: 1px solid var(--line-strong); border-radius: 18px; padding: 0; width: min(740px, calc(100vw - 32px)); background: var(--panel-solid); color: var(--ink); box-shadow: 0 40px 80px -30px rgba(0, 0, 0, 0.9); }
+dialog::backdrop { background: rgba(6, 4, 10, 0.6); -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); }
+dialog header { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 20px 22px 0; }
+dialog .body { padding: 16px 22px 22px; display: grid; gap: 20px; }
+.toast { position: fixed; left: 50%; bottom: calc(22px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--panel-solid); color: var(--ink); border: 1px solid var(--line-strong); border-left: 3px solid var(--good); padding: 11px 16px; border-radius: 12px; font-size: 0.9rem; box-shadow: 0 20px 40px -16px rgba(0, 0, 0, 0.9); z-index: 20; max-width: calc(100vw - 32px); }
+.toast.bad { border-left-color: var(--bad); }
 
 @media (max-width: 860px) {
   .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .detail-grid { grid-template-columns: minmax(0, 1fr); }
+  .runbar { grid-template-columns: auto minmax(0, 1fr); }
+  .runbar .act { grid-column: 1 / -1; }
 }
 @media (max-width: 480px) {
   .kpis { grid-template-columns: minmax(0, 1fr); }
   .grid .wide { grid-column: auto; }
   .status { margin-left: 0; }
+  .brand .tag { display: none; }
 }
 @media (prefers-reduced-motion: no-preference) {
-  .toast { animation: rise 0.18s ease-out; }
-  @keyframes rise { from { transform: translate(-50%, 8px); opacity: 0; } }
-  .deal.enter { animation: deal-in 0.4s ease-out both; animation-delay: calc(var(--i, 0) * 45ms); }
-  @keyframes deal-in { from { opacity: 0; transform: translateY(10px) scale(0.98); } }
-  .dot.busy { animation: pulse 1.2s ease-in-out infinite; }
-  @keyframes pulse { 50% { box-shadow: 0 0 0 7px var(--accent-soft); } }
-  .sweep { animation: sweep 1.6s linear infinite; }
-  @keyframes sweep { from { background-position: -40% 0; } to { background-position: 140% 0; } }
+  .bg i:nth-child(1) { animation: drift-a 34s ease-in-out infinite alternate; }
+  .bg i:nth-child(2) { animation: drift-b 41s ease-in-out infinite alternate; }
+  .bg i:nth-child(3) { animation: drift-c 47s ease-in-out infinite alternate; }
+  @keyframes drift-a { to { transform: translate(28vmax, 16vmax) scale(1.15); } }
+  @keyframes drift-b { to { transform: translate(-30vmax, 22vmax) scale(0.9); } }
+  @keyframes drift-c { to { transform: translate(24vmax, -18vmax) scale(1.2); } }
+  .bg::before { animation: grid-pan 24s linear infinite; }
+  @keyframes grid-pan { to { transform: translateY(48px); } }
+  .radar::after { animation: spin 2.2s linear infinite; }
+  @keyframes spin { to { transform: rotate(1turn); } }
+  .dial.live::after { animation: beat 2s ease-in-out infinite; }
+  @keyframes beat { 50% { transform: scale(0.7); opacity: 0.7; } }
+  .toast { animation: rise 0.2s ease-out; }
+  @keyframes rise { from { transform: translate(-50%, 10px); opacity: 0; } }
+  .deal.enter { animation: reveal 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) both; animation-delay: calc(var(--i, 0) * 70ms); }
+  .deal.enter .art::before { content: ""; position: absolute; inset: 0; z-index: 2; background: linear-gradient(105deg, transparent 30%, rgba(255, 255, 255, 0.35) 50%, transparent 70%); transform: translateX(-120%); animation: shine 1.1s ease-out 0.25s both; animation-delay: calc(var(--i, 0) * 70ms + 250ms); }
+  @keyframes reveal { 0% { opacity: 0; transform: translateY(18px) scale(0.96); box-shadow: 0 0 0 0 var(--tier); } 60% { opacity: 1; box-shadow: 0 0 40px -6px var(--tier); } 100% { transform: none; } }
+  @keyframes shine { to { transform: translateX(120%); } }
+  .badge-new { animation: glow 2.4s ease-in-out infinite; }
+  @keyframes glow { 50% { box-shadow: 0 0 26px 0 rgba(255, 61, 127, 0.85); } }
+  button.btn.primary { transition: background-position 0.5s ease, box-shadow 0.2s, transform 0.15s; }
 }
 </style>
 </head>
 <body>
+<div class="bg" aria-hidden="true"><i></i><i></i><i></i></div>
 <div class="offline" id="offline" hidden role="alert"><div class="wrap"><strong>SkinEdge выключен.</strong><span>Сканер остановлен, данные сохранены. Чтобы открыть снова, запусти SkinEdge.cmd: страница обновится сама.</span></div></div>
 <header class="top">
   <div class="wrap">
-    <div class="brand"><h1>Skin<span>Edge</span></h1><span class="tag">только анализ, сделки совершаешь ты</span></div>
+    <div class="brand"><svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffae2b"/><stop offset=".55" stop-color="#ff3d7f"/><stop offset="1" stop-color="#a35cff"/></linearGradient></defs><path d="M16 2l12 7v14l-12 7-12-7V9z" fill="none" stroke="url(#lg)" stroke-width="2.2" stroke-linejoin="round"/><path d="M10 19.5l4.5-4.5 3 3L23 12.5" fill="none" stroke="url(#lg)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg><h1>Skin<span>Edge</span></h1><span class="tag">только анализ, сделки совершаешь ты</span></div>
     <div class="status" id="status"><span class="muted">Загружаю…</span></div>
     <button type="button" class="btn ghost small" id="quit" hidden>Выключить</button>
     <nav class="tabs" aria-label="Разделы">
@@ -305,7 +383,7 @@ dialog .body { padding: 16px 20px 20px; display: grid; gap: 20px; }
     <section class="panel runbar" id="runbar" aria-live="polite"><span class="muted">Загружаю…</span></section>
     <section aria-labelledby="deals-title" style="display:grid;gap:14px">
       <div class="section-head">
-        <h2 id="deals-title">Найденные сделки</h2>
+        <h2 id="deals-title">Найденные сделки<span class="count" id="deals-count"></span></h2>
         <div class="tools">
           <div class="filters" role="group" aria-label="Игра" id="deal-games"></div>
           <label class="small muted">Сначала <select id="deal-sort" aria-label="Сортировка">
@@ -316,6 +394,7 @@ dialog .body { padding: 16px 20px 20px; display: grid; gap: 20px; }
         </div>
       </div>
       <div class="cards" id="cards"></div>
+      <div class="legend" aria-label="Цвет карточки по ROI"><span>Цвет карточки — по ROI, как редкость в CS2:</span><span><i style="background:#4b69ff"></i>до 8%</span><span><i style="background:#8847ff"></i>8–15%</span><span><i style="background:#d32ce6"></i>15–25%</span><span><i style="background:#eb4b4b"></i>25–40%</span><span><i style="background:#ffbf36"></i>от 40%</span></div>
       <p class="muted small" style="margin:0">Цена продажи — оценка по лотам и реальным продажам за 7 дней, прибыль — после всех комиссий и вывода, в EUR. Это не гарантия: перед покупкой проверь лот, float и наклейки. SkinEdge ничего не покупает и не продаёт.</p>
     </section>
   </div>
@@ -455,7 +534,8 @@ function scannerPill(sc) {
 }
 function renderStatus() {
   const sc = S.scan ?? S.meta.scanner, fx = S.meta.fx;
-  const rate = fx ? `<span class="num">1 EUR = ${esc(fx.usd_per_eur)} USD</span><span class="muted">${esc(fx.source)}</span>` : `<span class="muted">курса USD нет</span>`;
+  const rates = fx ? Object.entries(fx.rates).map(([c, r]) => `${esc(r)} ${esc(c)}`).join(" · ") : "";
+  const rate = fx ? `<span class="num">1 EUR = ${rates}</span><span class="muted">${esc(fx.source)}</span>` : `<span class="muted">курсов USD и RUB нет</span>`;
   $("#status").innerHTML = scannerPill(sc) + rate;
   $("#quit").hidden = !S.meta.can_quit;
 }
@@ -469,20 +549,22 @@ function lastPass(last) {
   return `<div class="last">Последний проход в ${when(last.at)} · ${esc(games)} · сравнено ${last.pairs}, найдено ${last.found} (полных расчётов ${last.complete}) · ${duration(last.took)}${sent}</div>`;
 }
 function renderRunbar() {
-  const sc = S.scan, start = `<button type="button" class="btn primary" data-scan="start">${ICON.play}Запустить сканер</button>`;
+  const sc = S.scan, box = $("#runbar");
+  const start = `<button type="button" class="btn primary" data-scan="start">${ICON.play}Запустить сканер</button>`;
   const stop = `<button type="button" class="btn" data-scan="stop"${sc.state === "stopping" ? " disabled" : ""}>${ICON.stop}Остановить</button>`;
-  let dot = "", title, sub = "", btn = sc.controls ? start : "";
+  let mood = "", gauge = '<span class="dial idle"></span>', title, sub = "", act = sc.controls ? start : "";
   if (sc.state === "running" && sc.pass) {
-    [dot, title, btn] = ["busy", `Идёт проход ${sc.pass}`, stop];
+    [mood, gauge, title, act] = ["busy", '<span class="radar"></span>', `Идёт проход ${sc.pass}`, stop];
     sub = "Загружаю цены площадок, проверяю реальные продажи и считаю маршруты. Обычно 1–3 минуты.";
   } else if (sc.state === "running") {
-    [dot, title, btn] = ["on", "Сканер работает", stop];
+    [mood, gauge, title] = ["live", '<span class="dial live" id="dial"></span>', "Сканер работает"];
+    act = `${sc.next_at ? '<span class="countdown-wrap"><small>до прохода</small><span class="countdown" id="countdown"></span></span>' : ""}${stop}`;
     sub = sc.next_at ? `Следующий проход в ${hm(sc.next_at)}. Новые сделки появятся карточками ниже.` : "";
   } else if (sc.state === "stopping") {
-    [dot, title, btn] = ["warn", "Сканер останавливается", stop];
+    [gauge, title, act] = ['<span class="dial warn"></span>', "Сканер останавливается", stop];
     sub = "Доводит текущий проход до конца, следующего не будет.";
   } else if (sc.state === "external") {
-    [dot, title, btn] = ["on", "Сканер работает в другом окне", ""];
+    [mood, gauge, title, act] = ["live", '<span class="dial live" style="--p:1"></span>', "Сканер работает в другом окне", ""];
     sub = `Его находки тоже появляются здесь. Чтобы запускать сканер кнопкой, закрой окно skinedge run${sc.pid ? ` (процесс ${esc(sc.pid)})` : ""}: через минуту здесь появится кнопка запуска.`
       + (sc.controls ? ` Окна нет? Значит, оно закрылось аварийно, отметка снимется сама через 20 минут. <button type="button" class="linkbtn" data-scan="force">Запустить всё равно</button>` : "");
   } else {
@@ -492,10 +574,20 @@ function renderRunbar() {
       : "Сканер запускается из приложения SkinEdge (SkinEdge.cmd).";
   }
   const err = sc.error ? `<p class="note bad">${esc(sc.error)}</p>` : "";
-  $("#runbar").innerHTML = `${dot === "busy" ? '<div class="sweep"></div>' : ""}
-    <div class="row1"><div class="state"><span class="dot ${dot}"></span>${title}</div>${btn}</div>
-    ${sub ? `<div class="last">${sub}</div>` : ""}${err}${lastPass(sc.last)}`;
+  box.className = `panel runbar ${mood}`;
+  box.innerHTML = `${gauge}
+    <div class="info"><div class="state">${title}</div>${sub ? `<div class="last">${sub}</div>` : ""}${err}${lastPass(sc.last)}</div>
+    <div class="act">${act}</div>`;
+  tick();
 }
+function tick() {
+  const sc = S.scan, cd = $("#countdown"), dial = $("#dial");
+  if (!sc || !sc.next_at || (!cd && !dial)) return;
+  const left = Math.max(0, new Date(sc.next_at) - Date.now()), every = (sc.every || 900) * 1000;
+  if (cd) { const s = Math.ceil(left / 1000); cd.textContent = `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`; }
+  if (dial) dial.style.setProperty("--p", String(Math.min(1, Math.max(0, 1 - left / every))));
+}
+setInterval(tick, 1000);
 async function scanAction(act, btn) {
   if (act === "force" && btn.dataset.confirm !== "1") {
     btn.dataset.confirm = "1"; btn.textContent = "Точно? Два сканера сразу удвоят запросы к площадкам";
@@ -556,6 +648,7 @@ function legLink(url, mkt) {
     ? `<a class="m" href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="Открыть предмет на ${name}">${name}</a>`
     : `<span class="m">${name}</span>`;
 }
+const tier = (roi) => { const r = Number(roi); return r >= 0.4 ? "t-gold" : r >= 0.25 ? "t-covert" : r >= 0.15 ? "t-classified" : r >= 0.08 ? "t-restricted" : "t-milspec"; };
 function dealCard(d, i, enter) {
   const fresh = d.first_seen === d.found_at;
   const art = d.image ? `<img src="${esc(d.image)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ICON.item;
@@ -568,7 +661,7 @@ function dealCard(d, i, enter) {
     ...d.flags.map((f) => `<span class="flag">${esc(f)}</span>`),
     fresh ? `Найдена в ${when(d.found_at)}` : `Держится с ${when(d.first_seen)}, проверена в ${hm(d.found_at)}`,
   ];
-  return `<article class="deal${enter ? " enter" : ""}" style="--i:${Math.min(i, 8)}">
+  return `<article class="deal ${tier(d.roi)}${enter ? " enter" : ""}" style="--i:${Math.min(i, 8)}">
     <div class="art">${art}<div class="badges"><span class="game">${esc(gameTitle(d.app_id))}</span>${fresh ? '<span class="badge-new">Новая</span>' : ""}</div></div>
     <div class="content">
       <h3 class="deal-name" title="${esc(d.name)}">${esc(d.name)}</h3>
@@ -586,6 +679,7 @@ function dealCard(d, i, enter) {
 }
 function renderDeals() {
   renderGameFilters();
+  $("#deals-count").textContent = S.scan.deals.length ? String(S.scan.deals.length) : "";
   const list = visibleDeals();
   const sig = [S.game, S.sort, S.scan.state, !!S.scan.last, ...list.map((d) => d.key + d.found_at + (d.image || ""))].join("|");
   if (sig === S.sig) return;
@@ -755,7 +849,7 @@ async function hintQuote(form, p) {
 /* ---------- новая покупка ---------- */
 function renderNewForm(prefill = {}) {
   const form = $("#new-form");
-  form.innerHTML = tradeFields("n", prefill) + `<div class="actions"><button type="submit" class="btn primary">Добавить в журнал</button><span class="muted small">Курс USD запишется на сегодня.</span></div>`;
+  form.innerHTML = tradeFields("n", prefill) + `<div class="actions"><button type="submit" class="btn primary">Добавить в журнал</button><span class="muted small">Курсы USD и RUB запишутся на сегодня.</span></div>`;
   wireTradeForm(form, "n");
 }
 $("#new-form").addEventListener("submit", async (e) => {
@@ -828,12 +922,13 @@ function detailRow(t) {
   }
   const dates = [`Передать можно с ${dmy(t.tradable_from)} (Trade Protection ${market(t.buy_market)?.lock_days ?? 7} дн.)`];
   if (t.payout_at) dates.push(`Деньги доступны для вывода с ${dmy(t.payout_at)}`);
-  const rate = [t.buy_usd_per_eur && `курс при покупке ${t.buy_usd_per_eur}`, t.sell_usd_per_eur && `при продаже ${t.sell_usd_per_eur}`].filter(Boolean).join(", ");
+  const legRate = (leg) => [["usd", "USD"], ["rub", "RUB"]].filter(([k]) => t[`${leg}_${k}_per_eur`]).map(([k, c]) => `${t[`${leg}_${k}_per_eur`]} ${c}`).join(", ");
+  const rate = [legRate("buy") && `при покупке ${legRate("buy")}`, legRate("sell") && `при продаже ${legRate("sell")}`].filter(Boolean).join("; ");
   return `<tr class="detail"><td colspan="5"><div class="detail-grid">
     <div>${calc}</div>
     <div style="display:grid;gap:10px;align-content:start">
       <div class="small">${dates.map(esc).join("<br>")}</div>
-      ${rate ? `<div class="muted small">USD: ${esc(rate)}</div>` : ""}
+      ${rate ? `<div class="muted small">Курс за 1 EUR ${esc(rate)}</div>` : ""}
       <div class="actions" style="margin-top:4px">
         ${t.status === "sold" ? "" : `<button type="button" class="btn primary small" data-act="sell" data-id="${t.id}">Записать продажу</button>`}
         <button type="button" class="btn small" data-act="edit" data-id="${t.id}">Изменить</button>
@@ -871,14 +966,25 @@ async function handleAction(act, id, btn) {
 /* ---------- диалог ---------- */
 function openDialog(t, sale) {
   const dlg = $("#dlg"), body = $("#dlg-body");
-  const prefill = sale ? { ...t, sold_at: today(), sell_market: t.target_market, sell_price: "" } : t;
+  const prefill = sale ? { ...t, sold_at: today(), sell_market: t.target_market, sell_price: "" } : { ...t };
+  // Цена, записанная до смены валюты площадки (Market.CSGO: EUR → RUB), вписывается заново.
+  const former = {}, moved = new Set();
+  for (const leg of ["buy", "target", "sell"]) {
+    const cur = t[`${leg}_currency`], m = market(t[`${leg}_market`]);
+    if (cur && m && cur !== m.currency && prefill[`${leg}_price`]) {
+      former[leg] = `было ${t[`${leg}_price`]} ${cur}`; prefill[`${leg}_price`] = "";
+      moved.add(`${m.label} теперь считает в ${m.currency}`);
+    }
+  }
   $("#dlg-title").textContent = sale ? `Продажа: ${t.name}` : `Изменить: ${t.name}`;
-  body.innerHTML = tradeFields("d", prefill, true) + `<div class="actions" style="margin-top:0">
+  const note = moved.size ? `<p class="note" style="margin:0 0 14px">${esc([...moved].join(", "))}. Впиши цену в пустое поле в этой валюте, прежняя запись видна в подсказке.</p>` : "";
+  body.innerHTML = note + tradeFields("d", prefill, true) + `<div class="actions" style="margin-top:0">
     <button type="submit" class="btn primary">${sale ? "Записать продажу" : "Сохранить"}</button>
     ${t.status === "sold" && !sale ? `<button type="button" class="btn" id="d-unsell">Отменить продажу</button>` : ""}
   </div>`;
   const form = $("#dlg-form");
   wireTradeForm(form, "d");
+  for (const [leg, text] of Object.entries(former)) $(`#d-${leg}_price`).placeholder = text;
   $("#d-unsell")?.addEventListener("click", () => { ["sold_at", "sell_price"].forEach((n) => ($(`#d-${n}`).value = "")); $("#d-sell_market").value = ""; form.requestSubmit(); });
   dlg.showModal();
   (sale ? $("#d-sell_price") : $("#d-name")).focus();

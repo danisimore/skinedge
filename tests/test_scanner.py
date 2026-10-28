@@ -9,15 +9,18 @@ from skinedge.cli import app
 from skinedge.fees.schedule import FeeSchedule
 from skinedge.fx import FxRates
 from skinedge.money import Currency, Money
-from skinedge.paper import evaluate, record, summarize
+from skinedge.paper import PaperTrade, evaluate, record, summarize
 from skinedge.quotes import Quote, QuoteKind, Sale, SalesStats, SalesWindow
 from skinedge.scanner import ScanConfig, Scanner, estimate_sell, stats_from_sales
 from skinedge.storage import Storage
 
 NOW = datetime(2026, 10, 26, 12, 0, tzinfo=UTC)
 NAME = "AK-47 | Redline (Field-Tested)"
-FX = FxRates(rates={Currency.USD: Decimal("1.10")}, spread=Decimal("0.01"))
+FX = FxRates(
+    rates={Currency.USD: Decimal("1.10"), Currency.RUB: Decimal("90.00")}, spread=Decimal("0.01")
+)
 CFG = ScanConfig()
+SCAN_ARGS = ["scan", "--no-fetch", "--usd-per-eur", "1.10", "--rub-per-eur", "90"]
 
 
 def q(
@@ -67,6 +70,28 @@ def scanner() -> Scanner:
 
 
 # ---------- оценка цены продажи ----------
+
+
+def tm(price: str, currency: Currency = Currency.RUB) -> Quote:
+    return q("marketcsgo", price).model_copy(update={"currency": currency})
+
+
+def test_quotes_in_former_currency_are_skipped() -> None:
+    """Market.CSGO перешёл на рубли: котировка, сохранённая ещё в EUR, не участвует."""
+    sell = {NAME: q("skinport", "14.01")}, {NAME: stats("13.00", 10)}
+    old = {NAME: tm("9.00", Currency.EUR)}
+    assert scanner().scan("marketcsgo", "skinport", old, *sell, NOW) == []
+    assert scanner().candidates("marketcsgo", "skinport", old, sell[0], NOW, 10) == []
+    found = scanner().scan("marketcsgo", "skinport", {NAME: tm("810.00")}, *sell, NOW)
+    assert [o.result.buy_price for o in found] == [Money.of("810.00", Currency.RUB)]
+
+
+def test_sales_in_other_currency_are_ignored() -> None:
+    eur = stats("27.00", 10, source="marketcsgo").model_copy(update={"currency": Currency.EUR})
+    assert estimate_sell(tm("2700.00"), eur, CFG) is None  # 27 EUR с 2700 RUB не сравнить
+    rub = eur.model_copy(update={"currency": Currency.RUB, "median": Decimal("2430.00")})
+    est = estimate_sell(tm("2700.00"), rub, CFG)
+    assert est is not None and est.price == Money.of("2430.00", Currency.RUB)
 
 
 def test_estimate_uses_median_when_lower() -> None:
@@ -278,6 +303,7 @@ def test_paper_record_and_checkpoints() -> None:
     s, _ = _storage_with_signal()
     trade = s.paper_trades()[0]
     assert trade.profit_eur == Decimal("2.77") and trade.usd_per_eur == Decimal("1.10")
+    assert trade.rub_per_eur == Decimal("90.00")
 
     # Через сутки цена упала: медиана 12.00 → 12.00 − 8% = 11.04, прибыль 1.85.
     s.save_quotes([q("skinport", "13.01", at=NOW + timedelta(days=1, minutes=5))])
@@ -336,6 +362,53 @@ def test_old_model_trades_hidden(tmp_path: Path) -> None:
     assert s.last_paper(NAME, "skinport", "dmarket") is None  # и не мешает записать новую
 
 
+def test_paper_trade_in_former_currency() -> None:
+    """Сигнал записан, когда Market.CSGO считался в EUR, а потом площадка перешла на рубли."""
+    s = Storage(":memory:")
+    s.save_paper(
+        PaperTrade(
+            created_at=NOW,
+            app_id=730,
+            market_hash_name=NAME,
+            buy_market="skinport",
+            sell_market="marketcsgo",
+            buy_price=Decimal("10.00"),
+            buy_currency=Currency.EUR,
+            sell_price=Decimal("12.00"),
+            sell_currency=Currency.EUR,
+            cost_eur=Decimal("10.00"),
+            proceeds_eur=Decimal("10.83"),
+            profit_eur=Decimal("0.83"),
+            roi=Decimal("0.083"),
+            usd_per_eur=Decimal("1.10"),
+            complete=True,
+            lock_days=15,
+        )
+    )
+    trade = s.paper_trades()[0]
+    assert trade.rub_per_eur is None
+
+    def at(days: int) -> datetime:
+        return NOW + timedelta(days=days, minutes=5)
+
+    def tm_stats(median: str, currency: Currency, days: int) -> SalesStats:
+        st = stats(median, 10, at=at(days), source="marketcsgo")
+        return st.model_copy(update={"currency": currency})
+
+    # Через сутки данные ещё в EUR: проверка по ним, в той же валюте, что и сигнал.
+    s.save_quotes([tm("12.01", Currency.EUR).model_copy(update={"fetched_at": at(1)})])
+    s.save_sales([tm_stats("12.00", Currency.EUR, 1)])
+    # Через 7 дней цены уже в рублях: сравнивать с сигналом нечем.
+    s.save_quotes([tm("1081.00").model_copy(update={"fetched_at": at(7)})])
+    s.save_sales([tm_stats("1080.00", Currency.RUB, 7)])
+
+    checks = evaluate(trade, s, FeeSchedule.load(), Decimal("0.01"), CFG, NOW + timedelta(days=8))
+    # 12.00 EUR − 5% продавцу = 11.40, вывод на карту 5% = 10.83.
+    assert checks["24ч"].sell_price == Money.of("12.00", Currency.EUR)
+    assert checks["24ч"].profit_eur == Decimal("0.83")
+    assert "7д" not in checks
+
+
 def test_paper_future_checkpoints_skipped() -> None:
     s, _ = _storage_with_signal()
     trade = s.paper_trades()[0]
@@ -357,7 +430,7 @@ def test_cli_scan_and_paper(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     s.close()
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("SKINEDGE_DB_PATH", str(db))
-    result = CliRunner().invoke(app, ["scan", "--no-fetch", "--usd-per-eur", "1.10"])
+    result = CliRunner().invoke(app, SCAN_ARGS)
     assert result.exit_code == 0, result.output
     assert "dmarket → skinport" in result.output
     assert "прибыль 2.77 EUR" in result.output
@@ -365,7 +438,8 @@ def test_cli_scan_and_paper(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     assert "Возможностей: 1" in result.output  # стикер без реального спроса отсеян
 
     low = CliRunner().invoke(
-        app, ["scan", "--no-fetch", "--usd-per-eur", "1.10", "--min-roi", "0", "--min-profit", "0"]
+        app,
+        [*SCAN_ARGS, "--min-roi", "0", "--min-profit", "0"],
     )
     assert low.exit_code == 0, low.output
     assert "Записано виртуальных сделок: 0" in low.output  # диагностика не пишет в журнал

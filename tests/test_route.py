@@ -179,3 +179,14 @@ def test_cli_requires_fx_for_usd() -> None:
         ],
     )
     assert result.exit_code != 0
+
+
+def test_cli_fees_ruble_route_needs_rate() -> None:
+    args = ["fees", "--buy-market", "marketcsgo", "--buy", "810", "--sell-market", "skinport"]
+    args += ["--sell", "13"]
+    result = CliRunner().invoke(app, args)
+    assert result.exit_code != 0 and "--rub-per-eur" in result.output
+    result = CliRunner().invoke(app, [*args, "--rub-per-eur", "90"])
+    assert result.exit_code == 0, result.output
+    assert "Чистая прибыль:           2.87 EUR" in result.output
+    assert "Конвертация RUB→EUR (спред 1%): база 810.00 RUB → 9.09 EUR" in result.output

@@ -186,7 +186,7 @@ def test_cli_scan_notifies_once(
     monkeypatch.setenv("SKINEDGE_DB_PATH", str(db))
     monkeypatch.setenv("TG_BOT_TOKEN", TOKEN)
     monkeypatch.setenv("TG_CHAT_ID", "777")
-    args = ["scan", "--no-fetch", "--usd-per-eur", "1.10"]
+    args = ["scan", "--no-fetch", "--usd-per-eur", "1.10", "--rub-per-eur", "90"]
     first = CliRunner().invoke(app, args)
     assert first.exit_code == 0, first.output
     assert "Отправлено в Telegram: 1" in first.output

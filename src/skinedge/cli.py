@@ -23,7 +23,7 @@ from skinedge.config import Settings, SetupError
 from skinedge.fees.models import FeeRule, Operation
 from skinedge.fees.schedule import FeeSchedule, Payout
 from skinedge.finance.route import BALANCE, FeeLine, RouteCalculator, RouteResult
-from skinedge.fx import FxRates
+from skinedge.fx import FxRates, combine
 from skinedge.games import GAMES, parse_games
 from skinedge.games import title as game_title
 from skinedge.money import Currency, Money
@@ -33,7 +33,7 @@ from skinedge.pipeline import Pipeline, ScanOptions
 from skinedge.quotes import Quote
 from skinedge.runner import MIN_EVERY, AlreadyRunning, Runner, RunOptions
 from skinedge.scanner import Opportunity, ScanConfig
-from skinedge.sources import ecb
+from skinedge.sources import cbr, ecb
 from skinedge.sources.base import SourceError
 from skinedge.sources.csfloat import CSFloatSource
 from skinedge.sources.dmarket import DMarketSigner, DMarketSource
@@ -140,6 +140,9 @@ def fees(
     usd_per_eur: Annotated[
         str | None, typer.Option("--usd-per-eur", help="Курс: сколько USD за 1 EUR (ЕЦБ)")
     ] = None,
+    rub_per_eur: Annotated[
+        str | None, typer.Option("--rub-per-eur", help="Курс: сколько RUB за 1 EUR (ЦБ РФ)")
+    ] = None,
     deposit: Annotated[
         str, typer.Option(help="Способ пополнения площадки покупки или 'balance'")
     ] = BALANCE,
@@ -157,10 +160,14 @@ def fees(
     buy_ccy = schedule.market(buy_market).currency
     sell_ccy = schedule.market(sell_market).currency
     rates: dict[Currency, Decimal] = {}
-    if usd_per_eur is not None:
-        rates[Currency.USD] = _decimal(usd_per_eur, "--usd-per-eur")
-    elif Currency.USD in (buy_ccy, sell_ccy):
-        raise typer.BadParameter("Маршрут с USD: укажи курс --usd-per-eur")
+    for currency, value, flag in (
+        (Currency.USD, usd_per_eur, "--usd-per-eur"),
+        (Currency.RUB, rub_per_eur, "--rub-per-eur"),
+    ):
+        if value is not None:
+            rates[currency] = _decimal(value, flag)
+        elif currency in (buy_ccy, sell_ccy):
+            raise typer.BadParameter(f"Маршрут с {currency}: укажи курс {flag}")
     fx = FxRates(rates=rates, spread=settings.fx_spread, source="cli")
 
     calc = RouteCalculator(schedule, fx, buy_market, sell_market, deposit, withdraw)
@@ -422,19 +429,37 @@ def item(
         storage.close()
 
 
-def _fx(settings: Settings, usd_per_eur: str | None) -> FxRates:
-    if usd_per_eur is not None:
-        return _manual_fx(settings, usd_per_eur)
+def _official_fx(settings: Settings) -> FxRates:
+    """Официальные курсы: USD от ЕЦБ, RUB от ЦБ РФ (ЕЦБ рубль не публикует)."""
+    return combine(ecb.fetch_rates(settings.fx_spread), cbr.fetch_rates(settings.fx_spread))
+
+
+def _fx(settings: Settings, usd_per_eur: str | None, rub_per_eur: str | None) -> FxRates:
+    manual = _manual_fx(settings, usd_per_eur, rub_per_eur)
+    if manual is not None:
+        return manual
     try:
-        return ecb.fetch_rates(settings.fx_spread)
+        return _official_fx(settings)
     except SourceError as exc:
-        typer.echo(f"Не удалось получить курс ЕЦБ ({exc}). Укажи --usd-per-eur", err=True)
+        typer.echo(
+            f"Не удалось получить курс ({exc}). Укажи --usd-per-eur и --rub-per-eur", err=True
+        )
         raise typer.Exit(1) from exc
 
 
-def _manual_fx(settings: Settings, usd_per_eur: str) -> FxRates:
-    rate = _decimal(usd_per_eur, "--usd-per-eur")
-    return FxRates(rates={Currency.USD: rate}, spread=settings.fx_spread, source="cli")
+def _manual_fx(
+    settings: Settings, usd_per_eur: str | None, rub_per_eur: str | None
+) -> FxRates | None:
+    """Курсы, заданные вручную: нужны оба, иначе ``None`` (брать официальные)."""
+    if usd_per_eur is None and rub_per_eur is None:
+        return None
+    if usd_per_eur is None or rub_per_eur is None:
+        raise typer.BadParameter("Курсы вручную задаются вместе: --usd-per-eur и --rub-per-eur")
+    rates = {
+        Currency.USD: _decimal(usd_per_eur, "--usd-per-eur"),
+        Currency.RUB: _decimal(rub_per_eur, "--rub-per-eur"),
+    }
+    return FxRates(rates=rates, spread=settings.fx_spread, source="cli")
 
 
 def render_opportunity(n: int, opp: Opportunity) -> str:
@@ -530,6 +555,9 @@ Verify = Annotated[
     ),
 ]
 UsdPerEur = Annotated[str | None, typer.Option("--usd-per-eur", help="Курс вручную вместо ЕЦБ")]
+RubPerEur = Annotated[
+    str | None, typer.Option("--rub-per-eur", help="Курс рубля вручную вместо ЦБ РФ")
+]
 Paper = Annotated[bool, typer.Option("--paper/--no-paper", help="Записывать виртуальные сделки")]
 Notify = Annotated[
     bool, typer.Option("--notify/--no-notify", help="Отправлять новые возможности в Telegram")
@@ -582,6 +610,7 @@ def scan(
     max_age: Annotated[int, typer.Option("--max-age", help="Макс. возраст цен, мин")] = 30,
     verify: Verify = 40,
     usd_per_eur: UsdPerEur = None,
+    rub_per_eur: RubPerEur = None,
     top: Annotated[int, typer.Option(help="Сколько возможностей показать")] = 15,
     paper: Paper = True,
     notify: Notify = True,
@@ -614,8 +643,8 @@ def scan(
     )
     settings = Settings()
     schedule = _schedule(settings)
-    fx = _fx(settings, usd_per_eur)
-    typer.echo(f"Курс: 1 EUR = {fx.rates[Currency.USD]} USD ({fx.source}), спред {_pct(fx.spread)}")
+    fx = _fx(settings, usd_per_eur, rub_per_eur)
+    typer.echo(f"Курс: {fx.describe()} ({fx.source}), спред {_pct(fx.spread)}")
     storage = Storage(settings.db_path)
     tuning = load_tuning(storage)
     if tuning is not None:
@@ -707,6 +736,7 @@ def run_command(
     min_roi: MinRoi = "0.05",
     verify: Verify = 40,
     usd_per_eur: UsdPerEur = None,
+    rub_per_eur: RubPerEur = None,
     paper: Paper = True,
     notify: Notify = True,
     report: Annotated[
@@ -750,10 +780,10 @@ def run_command(
         notify and telegram is not None,
         csfloat,
     )
-    manual = _manual_fx(settings, usd_per_eur) if usd_per_eur is not None else None
+    manual = _manual_fx(settings, usd_per_eur, rub_per_eur)
 
     def fx_source() -> FxRates:
-        return manual or ecb.fetch_rates(settings.fx_spread)
+        return manual or _official_fx(settings)
 
     run_opts = RunOptions(
         every=timedelta(minutes=every),
@@ -1054,7 +1084,7 @@ def _run_app(
     )
 
     def fx_source() -> FxRates:
-        return ecb.fetch_rates(settings.fx_spread)
+        return _official_fx(settings)
 
     def factory(stop: threading.Event, force: bool) -> Runner:
         run_opts = RunOptions(force=force)

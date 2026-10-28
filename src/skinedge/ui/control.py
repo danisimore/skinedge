@@ -70,6 +70,7 @@ class ScannerControl:
             "pass": runner.current,
             "next_at": None if stopping or next_at is None else next_at.isoformat(),
             "started_at": None if self.started_at is None else self.started_at.isoformat(),
+            "every": runner.opts.every.total_seconds(),
             "error": None,
         }
 

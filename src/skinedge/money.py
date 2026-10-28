@@ -18,6 +18,7 @@ class Currency(StrEnum):
 
     EUR = "EUR"
     USD = "USD"
+    RUB = "RUB"
 
 
 class Rounding(StrEnum):

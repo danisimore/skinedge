@@ -41,6 +41,7 @@ from skinedge.sources.base import SourceError
 from skinedge.sources.csfloat import CSFloatSource
 from skinedge.sources.dmarket import DMarketSource
 from skinedge.sources.lisskins import LisSkinsSource
+from skinedge.sources.marketcsgo import CURRENCY as MARKETCSGO_CURRENCY
 from skinedge.sources.marketcsgo import MarketCSGOSource
 from skinedge.sources.skinport import SkinportSource
 from skinedge.storage import Storage
@@ -418,16 +419,18 @@ class Pipeline:
         return list(dict.fromkeys([*check, *open_trades]))
 
     def _verify_marketcsgo(self, names: list[str], app_id: int, now: datetime) -> None:
-        """Статистика продаж Market.CSGO по истории сделок, в евро.
+        """Статистика продаж Market.CSGO по истории сделок, в валюте аккаунта (RUB).
 
         Предметы, проверенные меньше часа назад, пропускаются. Ошибка прерывает
         проверку: все файлы лежат на одном сервере.
         """
         if not names or self.marketcsgo is None:
             return
-        fresh = self.storage.recent_sales(
+        recent = self.storage.recent_sales(
             "marketcsgo", SalesWindow.D7, now - MARKETCSGO_STATS_TTL, app_id
         )
+        # Статистика в прежней валюте (EUR до перехода на рубли) не годится.
+        fresh = {n for n, st in recent.items() if st.currency is MARKETCSGO_CURRENCY}
         todo = [name for name in names if name not in fresh]
         if not todo:
             return
@@ -439,7 +442,9 @@ class Pipeline:
             except SourceError as exc:
                 self._say(f"Market.CSGO: продажи не получены ({exc}), проверка прервана")
                 break
-            stats.append(stats_from_sales(deals, "marketcsgo", app_id, name, Currency.EUR, now))
+            stats.append(
+                stats_from_sales(deals, "marketcsgo", app_id, name, MARKETCSGO_CURRENCY, now)
+            )
         self.storage.save_sales(stats)
 
     def _verify_dmarket(self, names: list[str], app_id: int, now: datetime) -> None:

@@ -10,7 +10,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, ConfigDict
 
-from skinedge.fees.models import FeeRule, Operation
+from skinedge.fees.models import FeeKind, FeeRule, Operation
 from skinedge.money import Currency, Money
 
 
@@ -83,6 +83,34 @@ class FeeSchedule:
             )
         market = self.market(marketplace).model_copy(update={"withdraw_method": method})
         return FeeSchedule({**self.marketplaces, marketplace: market}, self.rules)
+
+    def in_currency(self, marketplace: str, currency: Currency) -> FeeSchedule:
+        """Новое расписание, где площадка считается в другой валюте.
+
+        Нужно для записей, сделанных, когда площадка была в другой валюте
+        (Market.CSGO до перехода на рубли). Так можно пересчитать только правила
+        в процентах: фиксированная комиссия, минимум или порог цены в другой
+        валюте означали бы другие деньги.
+
+        Raises:
+            ValueError: Если у площадки есть правила с суммами.
+        """
+        market = self.market(marketplace)
+        if market.currency is currency:
+            return self
+        rules = []
+        for rule in self.rules:
+            if rule.marketplace != marketplace:
+                rules.append(rule)
+                continue
+            amounts = (rule.min_fee, rule.max_fee, rule.price_from, rule.price_to)
+            if rule.kind is not FeeKind.PERCENT or any(v is not None for v in amounts):
+                raise ValueError(
+                    f"{rule.id}: правило с суммами в {rule.currency} нельзя считать в {currency}"
+                )
+            rules.append(rule.model_copy(update={"currency": currency}))
+        market = market.model_copy(update={"currency": currency})
+        return FeeSchedule({**self.marketplaces, marketplace: market}, rules)
 
     def __init__(self, marketplaces: dict[str, Marketplace], rules: list[FeeRule]) -> None:
         ids = [r.id for r in rules]

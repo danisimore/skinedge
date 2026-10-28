@@ -132,3 +132,16 @@ def test_steam_small_and_odd_prices(buyer: str, seller: str) -> None:
 def test_steam_roundtrip(received: int) -> None:
     price = Money.from_minor(buyer_price_minor(received, STEAM, GAME), "EUR")
     assert seller_receives(price, STEAM, GAME) == Money.from_minor(received, "EUR")
+
+
+def test_schedule_in_former_currency() -> None:
+    schedule = FeeSchedule.load()
+    eur = schedule.in_currency("marketcsgo", Currency.EUR)
+    assert eur.market("marketcsgo").currency is Currency.EUR
+    assert schedule.market("marketcsgo").currency is Currency.RUB  # исходное не меняется
+    sell = eur.select("marketcsgo", Operation.SELL, Money.of("10", "EUR"))
+    assert [r.rate for r in sell] == [Decimal("0.05")]
+    assert schedule.in_currency("marketcsgo", Currency.RUB) is schedule
+    # У Skinport ставка зависит от цены (до 1000 EUR): в другой валюте это другие деньги.
+    with pytest.raises(ValueError, match="суммами"):
+        schedule.in_currency("skinport", Currency.USD)

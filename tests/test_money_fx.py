@@ -3,7 +3,7 @@ from decimal import Decimal
 
 import pytest
 
-from skinedge.fx import Direction, FxRates
+from skinedge.fx import Direction, FxRates, combine
 from skinedge.money import Currency, Money, Rounding
 
 
@@ -71,3 +71,31 @@ def test_fx_pay_costs_more_than_receive() -> None:
 def test_fx_missing_rate() -> None:
     with pytest.raises(KeyError):
         FxRates(rates={}).convert(Money.of("1", "USD"), Currency.EUR, Direction.PAY)
+
+
+def test_combine_official_rates() -> None:
+    spread = Decimal("0.01")
+    usd = FxRates(
+        rates={Currency.USD: Decimal("1.0812")},
+        spread=spread,
+        as_of=datetime(2026, 10, 27, tzinfo=UTC),
+        source="ECB",
+    )
+    rub = FxRates(
+        rates={Currency.RUB: Decimal("90.0977")},
+        spread=spread,
+        as_of=datetime(2026, 10, 28, tzinfo=UTC),
+        source="ЦБ РФ",
+    )
+    fx = combine(usd, rub)
+    assert fx.rates == {Currency.USD: Decimal("1.0812"), Currency.RUB: Decimal("90.0977")}
+    assert fx.as_of == usd.as_of and fx.source == "ECB + ЦБ РФ"
+    assert fx.describe() == "1 EUR = 1.0812 USD, 90.0977 RUB"
+    # 900.98 RUB = 10.00 EUR по курсу ЦБ, минус спред 1% при получении.
+    assert fx.convert(Money.of("900.98", "RUB"), Currency.EUR, Direction.RECEIVE) == Money.of(
+        "9.90", "EUR"
+    )
+    with pytest.raises(ValueError, match="дважды"):
+        combine(usd, usd)
+    with pytest.raises(ValueError, match="спред"):
+        combine(usd, rub.model_copy(update={"spread": Decimal("0.02")}))

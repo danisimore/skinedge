@@ -275,7 +275,7 @@ def test_cli_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cli, "_dmarket", lambda settings: FakeDMarket(now))
     monkeypatch.setattr(cli, "MarketCSGOSource", lambda: None)
     monkeypatch.setattr(cli, "LisSkinsSource", lambda: None)
-    monkeypatch.setattr(cli.ecb, "fetch_rates", lambda spread: FX)
+    monkeypatch.setattr(cli, "_official_fx", lambda settings: FX)
     monkeypatch.setattr(cli, "_already_open", lambda port: False)
     opened: list[str] = []
     monkeypatch.setattr(cli.webbrowser, "open", opened.append)

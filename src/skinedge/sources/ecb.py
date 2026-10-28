@@ -3,7 +3,8 @@
 Файл https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml публичный,
 обновляется в рабочие дни около 16:00 CET и содержит курс валюты за 1 EUR.
 Это справочный курс: курс площадки или банка хуже, поэтому поверх него
-:class:`skinedge.fx.FxRates` применяет спред.
+:class:`skinedge.fx.FxRates` применяет спред. Курса рубля в файле ЕЦБ нет, его
+даёт ЦБ РФ (:mod:`skinedge.sources.cbr`).
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from skinedge.money import Currency
 from skinedge.sources.base import RateLimiter, SourceError, request_with_retries
 
 URL = "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml"
+CURRENCIES = frozenset({Currency.USD})  # что берём у ЕЦБ
 
 
 def parse_rates(xml: str, spread: Decimal) -> FxRates:
@@ -29,7 +31,7 @@ def parse_rates(xml: str, spread: Decimal) -> FxRates:
         spread: Спред конвертации.
 
     Returns:
-        Курсы поддерживаемых валют с датой публикации.
+        Курсы :data:`CURRENCIES` с датой публикации.
     """
     try:
         root = ET.fromstring(xml)
@@ -43,12 +45,12 @@ def parse_rates(xml: str, spread: Decimal) -> FxRates:
         if "time" in cube.attrib:
             as_of = datetime.fromisoformat(cube.attrib["time"]).replace(tzinfo=UTC)
         code = cube.attrib.get("currency")
-        if code in {c.value for c in Currency} and code != Currency.EUR.value:
+        if code in {c.value for c in CURRENCIES}:
             try:
                 rates[Currency(code)] = Decimal(cube.attrib["rate"])
             except (KeyError, InvalidOperation) as exc:
                 raise SourceError(f"ЕЦБ: неверный курс {code}") from exc
-    missing = {c for c in Currency if c is not Currency.EUR} - rates.keys()
+    missing = CURRENCIES - rates.keys()
     if missing:
         raise SourceError(f"ЕЦБ: нет курса {', '.join(sorted(missing))}")
     return FxRates(rates=rates, spread=spread, as_of=as_of, source="ECB")

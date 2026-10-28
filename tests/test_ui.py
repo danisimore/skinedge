@@ -4,6 +4,7 @@ import threading
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from http.server import ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -126,7 +127,7 @@ def test_runner_uses_saved_settings(caplog: pytest.LogCaptureFixture) -> None:
 
 
 def test_profit_with_fees_and_rates() -> None:
-    v = valuate(trade(), SCHEDULE, Decimal("1.20"), SPREAD)
+    v = valuate(trade(), SCHEDULE, {Currency.USD: Decimal("1.20")}, SPREAD)
     # 9.00 USD по курсу покупки 1.10 и спреду 1%: 8.2636 → 8.27 EUR.
     assert v.cost == Money.of("8.27", Currency.EUR)
     # Skinport: 13.00 − 8% = 11.96 EUR, вывод на счёт 0%.
@@ -145,7 +146,7 @@ def test_sold_trade_uses_sale_and_its_rate() -> None:
         sell_currency=Currency.USD,
         sell_usd_per_eur=Decimal("1.00"),
     )
-    v = valuate(t, SCHEDULE, Decimal("1.50"), SPREAD)
+    v = valuate(t, SCHEDULE, {Currency.USD: Decimal("1.50")}, SPREAD)
     assert v.sell_market == "dmarket"
     assert v.sell_price == Money.of("14.00", Currency.USD)
     assert v.proceeds.amount < Decimal("14.00")  # комиссия и вывод DMarket
@@ -156,21 +157,21 @@ def test_sold_trade_uses_sale_and_its_rate() -> None:
 
 def test_usd_trade_without_rate_is_not_valued() -> None:
     with pytest.raises(NoRate):
-        valuate(trade(buy_usd_per_eur=None), SCHEDULE, None, SPREAD)
+        valuate(trade(buy_usd_per_eur=None), SCHEDULE, {}, SPREAD)
     eur = trade(buy_market="skinport", buy_currency=Currency.EUR, buy_usd_per_eur=None)
-    assert valuate(eur, SCHEDULE, None, SPREAD).profit.currency is Currency.EUR
+    assert valuate(eur, SCHEDULE, {}, SPREAD).profit.currency is Currency.EUR
 
 
 def test_wallet_and_unknown_fees_are_flagged() -> None:
     steam = trade(target_market="steam", target_price=Decimal("15"))
-    assert valuate(steam, SCHEDULE, Decimal("1.1"), SPREAD).wallet
+    assert valuate(steam, SCHEDULE, {Currency.USD: Decimal("1.1")}, SPREAD).wallet
     lis = trade(
         buy_market="skinport",
         buy_currency=Currency.EUR,
         target_market="lisskins",
         target_currency=Currency.USD,
     )
-    assert not valuate(lis, SCHEDULE, Decimal("1.1"), SPREAD).complete
+    assert not valuate(lis, SCHEDULE, {Currency.USD: Decimal("1.1")}, SPREAD).complete
 
 
 def test_trade_needs_whole_sale_and_sane_dates() -> None:
@@ -204,21 +205,25 @@ def test_storage_keeps_trades() -> None:
 
 
 class FakeEcb:
-    def __init__(self, fail: bool = False) -> None:
+    def __init__(self, fail: bool = False, usd: str = "1.10") -> None:
         self.fail = fail
+        self.usd = usd
         self.calls = 0
 
     def __call__(self) -> FxRates:
         self.calls += 1
         if self.fail:
             raise SourceError("ЕЦБ недоступен")
-        return FxRates(rates={Currency.USD: Decimal("1.10")}, spread=SPREAD, source="ECB")
+        rates = {Currency.USD: Decimal(self.usd), Currency.RUB: Decimal("90")}
+        return FxRates(rates=rates, spread=SPREAD, source="ECB + ЦБ РФ")
 
 
-def make_app(storage: Storage | None = None, ecb: FakeEcb | None = None) -> App:
+def make_app(
+    storage: Storage | None = None, ecb: FakeEcb | None = None, now: datetime = NOW
+) -> App:
     s = storage or Storage(":memory:")
-    rates = Rates(ecb or FakeEcb(), s, lambda: NOW)
-    return App(s, SCHEDULE, rates, SPREAD, clock=lambda: NOW)
+    rates = Rates(ecb or FakeEcb(), s, lambda: now)
+    return App(s, SCHEDULE, rates, SPREAD, clock=lambda: now)
 
 
 def call(app: App, method: str, path: str, body: Any = None, **query: str) -> tuple[int, Any]:
@@ -250,7 +255,8 @@ def test_page_and_state() -> None:
         m for m in state["markets"] if m["id"] == "lisskins"
     ).items()
     assert state["settings_saved"] is False and state["settings"]["limit"] == 300
-    assert state["fx"]["usd_per_eur"] == "1.10" and state["scanner"]["running"] is True
+    assert state["fx"]["rates"] == {"USD": "1.10", "RUB": "90"}
+    assert state["scanner"]["running"] is True
     assert call(app, "GET", "/nope")[0] == 404
 
 
@@ -269,7 +275,8 @@ def test_trade_lifecycle() -> None:
     status, created = call(app, "POST", "/api/trades", FORM)
     assert status == 201
     assert created["buy_currency"] == "USD" and created["target_currency"] == "EUR"
-    assert created["buy_usd_per_eur"] == "1.10" and created["note"] == "из сигнала"
+    assert created["buy_usd_per_eur"] == "1.10" and created["buy_rub_per_eur"] == "90"
+    assert created["note"] == "из сигнала"
     assert created["status"] == "locked" and created["tradable_from"] == "2026-11-04"
     assert created["valuation"]["profit"] == "3.69"
 
@@ -286,9 +293,24 @@ def test_trade_lifecycle() -> None:
 
     status, back = call(app, "PUT", f"/api/trades/{created['id']}", FORM)
     assert back["status"] == "locked" and back["sell_usd_per_eur"] is None
+    assert back["sell_rub_per_eur"] is None
 
     assert call(app, "DELETE", f"/api/trades/{created['id']}")[0] == 200
     assert call(app, "DELETE", f"/api/trades/{created['id']}")[0] == 404
+
+
+def test_edit_keeps_sale_rate_and_price_time() -> None:
+    s = Storage(":memory:")
+    app = make_app(s)
+    created = call(app, "POST", "/api/trades", FORM)[1]
+    sale = {**FORM, "sold_at": "2026-11-05", "sell_market": "skinport", "sell_price": "12.50"}
+    call(app, "PUT", f"/api/trades/{created['id']}", sale)
+    # Курс уже другой, а в сделке поправили только заметку (цены в другом написании).
+    later = make_app(s, FakeEcb(usd="1.30"), NOW + timedelta(days=1))
+    edit = {**sale, "note": "float 0.15", "sell_price": "12,5", "target_price": "13.00"}
+    status, body = call(later, "PUT", f"/api/trades/{created['id']}", edit)
+    assert status == 200 and body["note"] == "float 0.15"
+    assert body["sell_usd_per_eur"] == "1.10" and body["target_at"] == created["target_at"]
 
 
 def test_trade_form_errors_in_russian() -> None:
@@ -306,8 +328,16 @@ def test_trade_form_errors_in_russian() -> None:
 def test_rate_falls_back_to_saved_one() -> None:
     s = Storage(":memory:")
     make_app(s).rates.current()  # ЕЦБ ответил, курс сохранён
-    rate, source, _ = make_app(s, FakeEcb(fail=True)).rates.current()
-    assert rate == Decimal("1.10") and source == "сохранённый ЕЦБ"
+    rates, source, _ = make_app(s, FakeEcb(fail=True)).rates.current()
+    assert rates == {Currency.USD: Decimal("1.10"), Currency.RUB: Decimal("90")}
+    assert source == "сохранённый ECB + ЦБ РФ"
+    # Запись прежней версии: только курс USD.
+    old = Storage(":memory:")
+    old.set_meta("ui.fx", json.dumps({"rate": "1.0812", "as_of": "2026-10-27T00:00:00+00:00"}))
+    rates, source, _ = make_app(old, FakeEcb(fail=True)).rates.current()
+    assert rates == {Currency.USD: Decimal("1.0812")} and source == "сохранённый ECB"
+    old.set_meta("ui.fx", json.dumps({"rates": {"RUB": "-1"}, "as_of": "2026-10-27"}))
+    assert make_app(old, FakeEcb(fail=True)).rates.current()[0] == {}
     status, created = call(
         make_app(Storage(":memory:"), FakeEcb(fail=True)), "POST", "/api/trades", FORM
     )
@@ -369,3 +399,94 @@ def test_http_rejects_foreign_requests() -> None:
     finally:
         server.shutdown()
         server.server_close()
+
+
+# ---------- Market.CSGO в рублях ----------
+
+TM_FORM = {**FORM, "buy_market": "marketcsgo", "buy_price": "810", "target_price": "13"}
+
+
+def test_ruble_trade_uses_cbr_rate() -> None:
+    app = make_app()
+    status, created = call(app, "POST", "/api/trades", TM_FORM)
+    assert status == 201 and created["buy_currency"] == "RUB"
+    assert created["buy_rub_per_eur"] == "90"
+    v = created["valuation"]
+    # 810 RUB по 90 и спред 1% = 9.09 EUR; 13 EUR − 8% Skinport = 11.96 EUR.
+    assert (v["cost"], v["proceeds"], v["profit"]) == ("9.09", "11.96", "2.87")
+    assert not any("записана" in w for w in v["warnings"])
+
+
+def test_trade_recorded_in_former_currency() -> None:
+    """Сделка, внесённая, когда Market.CSGO считался в EUR (как у пользователя 28.10)."""
+    s = Storage(":memory:")
+    old = trade(
+        buy_market="marketcsgo",
+        buy_price=Decimal("4.29"),
+        buy_currency=Currency.EUR,
+        target_price=Decimal("4.99"),
+    )
+    trade_id = s.save_trade(old)
+    app = make_app(s)
+    view = call(app, "GET", "/api/trades")[1]["trades"][0]
+    v = view["valuation"]
+    assert view["buy_currency"] == "EUR" and view["error"] is None
+    # Считается как раньше, в EUR: 4.29 без конвертации, 4.99 − 8% = 4.59.
+    assert (v["cost"], v["profit"]) == ("4.29", "0.30")
+    assert any("Цена покупки записана в EUR, а площадка теперь в RUB" in w for w in v["warnings"])
+
+    form = {**TM_FORM, "buy_price": "4.29", "target_price": "4.99", "bought_at": "2026-10-28"}
+    status, body = call(app, "PUT", f"/api/trades/{trade_id}", form)
+    assert status == 400 and body["fields"] == {"buy_price": "было 4.29 EUR, впиши цену в RUB"}
+    assert s.trade(trade_id).buy_currency is Currency.EUR  # type: ignore[union-attr]
+
+    status, fixed = call(app, "PUT", f"/api/trades/{trade_id}", {**form, "buy_price": "385"})
+    assert status == 200 and fixed["buy_currency"] == "RUB" and fixed["buy_price"] == "385"
+    assert fixed["buy_usd_per_eur"] == "1.10" and fixed["buy_rub_per_eur"] == "90"
+    assert not any("записана" in w for w in fixed["valuation"]["warnings"])
+
+
+def test_quote_hint_skips_former_currency() -> None:
+    s = Storage(":memory:")
+    s.save_quotes(
+        [
+            Quote(
+                source="marketcsgo",
+                app_id=CS2,
+                market_hash_name=NAME,
+                currency=Currency.EUR,
+                kind=QuoteKind.AGGREGATE,
+                min_price=Decimal("9.88"),
+                quantity=3,
+                fetched_at=NOW - timedelta(hours=1),
+            )
+        ]
+    )
+    assert make_app(s).quote(NAME, "marketcsgo") is None
+
+
+def test_old_journal_gets_ruble_columns(tmp_path: Path) -> None:
+    import sqlite3
+
+    db = tmp_path / "old.db"
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE trades (id INTEGER PRIMARY KEY, app_id INTEGER NOT NULL,"
+        " market_hash_name TEXT NOT NULL, bought_at TEXT NOT NULL, buy_market TEXT NOT NULL,"
+        " buy_price TEXT NOT NULL, buy_currency TEXT NOT NULL, buy_usd_per_eur TEXT,"
+        " target_market TEXT NOT NULL, target_price TEXT NOT NULL,"
+        " target_currency TEXT NOT NULL, target_at TEXT NOT NULL, sold_at TEXT,"
+        " sell_market TEXT, sell_price TEXT, sell_currency TEXT, sell_usd_per_eur TEXT,"
+        " note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)"
+    )
+    conn.execute(
+        "INSERT INTO trades VALUES (1, 730, 'Charm | Diamond Dog', '2026-10-27', 'marketcsgo',"
+        " '4.29', 'EUR', '1.1150', 'skinport', '4.99', 'EUR', ?, NULL, NULL, NULL, NULL,"
+        " NULL, '', ?)",
+        (NOW.isoformat(), NOW.isoformat()),
+    )
+    conn.commit()
+    conn.close()
+    stored = Storage(db).trade(1)
+    assert stored is not None and stored.buy_currency is Currency.EUR
+    assert stored.buy_price == Decimal("4.29") and stored.buy_rub_per_eur is None

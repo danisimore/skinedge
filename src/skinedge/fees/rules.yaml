@@ -35,8 +35,9 @@ marketplaces:
     withdraw_method: visa
   marketcsgo:
     # Market.CSGO (а также market.dota2.net и rust.tm — те же правила).
-    # SkinEdge берёт цены в евро: аккаунт Market.CSGO должен быть открыт в EUR.
-    currency: EUR
+    # Валюта аккаунта выбирается при регистрации; у пользователя рубли, поэтому
+    # цены, продажи и баланс в RUB. Все правила площадки в процентах.
+    currency: RUB
     payout: cash
     transfer_lock_days: 7
     # Деньги от продажи доступны для вывода через 8 дней (steamdb, 02.07.2026).
@@ -387,7 +388,7 @@ rules:
     operation: buy
     kind: percent
     rate: "0"
-    currency: EUR
+    currency: RUB
     verification: third_party
     source: "https://steamdb.com/ru/markets/csgotm"
     verified_at: 2026-07-02
@@ -397,7 +398,7 @@ rules:
     operation: sell
     kind: percent
     rate: "0.05"
-    currency: EUR
+    currency: RUB
     verification: third_party
     source: "https://steamdb.com/ru/markets/csgotm"
     verified_at: 2026-07-02
@@ -408,7 +409,7 @@ rules:
     operation: deposit
     kind: percent
     rate: "0"
-    currency: EUR
+    currency: RUB
     verification: unknown
     note: "Комиссии пополнения не найдены"
 
@@ -418,7 +419,7 @@ rules:
     method: card
     kind: percent
     rate: "0.05"
-    currency: EUR
+    currency: RUB
     verification: third_party
     source: "https://steamdb.com/ru/markets/csgotm"
     verified_at: 2026-07-02

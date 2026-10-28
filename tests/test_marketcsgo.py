@@ -22,16 +22,16 @@ from skinedge.storage import Storage
 NOW = datetime(2026, 10, 27, 9, 0, tzinfo=UTC)
 TS = int(NOW.timestamp())
 
-# Формат ответов — как в живых запросах 27.10.2026.
+# Формат ответов — как в живых запросах 27–28.10.2026.
 PRICES = {
     "success": True,
     "time": 1793088722,
-    "currency": "EUR",
+    "currency": "RUB",
     "items": [
-        {"market_hash_name": NAME, "volume": "372", "price": "21.798"},
-        {"market_hash_name": "Prisma Case", "volume": "1179", "price": "0.925"},
-        {"market_hash_name": "Zero", "volume": "3", "price": "0"},
-        {"market_hash_name": "No volume", "price": "1.000"},
+        {"market_hash_name": NAME, "volume": "372", "price": "1961.82"},
+        {"market_hash_name": "Prisma Case", "volume": "1179", "price": "83.25"},
+        {"market_hash_name": "Zero", "volume": "3", "price": "0.00"},
+        {"market_hash_name": "No volume", "price": "90.00"},
     ],
 }
 INDEX = {"history": {NAME: 7929, "Prisma Case": 39}}
@@ -43,7 +43,7 @@ HISTORY = {
         "history": [
             [TS - 3600, 2144.99, 25.895, 23.62],
             [TS - 7200, 2296.43, 27.723, 25.288],
-            [TS - 7200, 2296.43, 27.723, "bad"],
+            [TS - 7200, "bad", 27.723, 25.288],
         ],
     },
 }
@@ -73,22 +73,22 @@ def source(
 CS = "https://market.csgo.com/api/v2"
 
 
-def test_prices_parsed_in_euro() -> None:
-    quotes = source({f"{CS}/prices/EUR.json": PRICES}).fetch_quotes(CS2)
+def test_prices_parsed_in_rubles() -> None:
+    quotes = source({f"{CS}/prices/RUB.json": PRICES}).fetch_quotes(CS2)
     assert [(q.market_hash_name, q.min_price, q.quantity) for q in quotes] == [
-        (NAME, Decimal("21.798"), 372),
-        ("Prisma Case", Decimal("0.925"), 1179),
+        (NAME, Decimal("1961.82"), 372),
+        ("Prisma Case", Decimal("83.25"), 1179),
     ]
     first = quotes[0]
-    assert first.source == "marketcsgo" and first.currency is Currency.EUR
+    assert first.source == "marketcsgo" and first.currency is Currency.RUB
     assert first.kind is QuoteKind.AGGREGATE and first.app_id == CS2
 
 
 def test_each_game_has_its_own_site() -> None:
     seen: list[str] = []
     routes = {
-        "https://market.dota2.net/api/v2/prices/EUR.json": PRICES,
-        "https://rust.tm/api/v2/prices/EUR.json": PRICES,
+        "https://market.dota2.net/api/v2/prices/RUB.json": PRICES,
+        "https://rust.tm/api/v2/prices/RUB.json": PRICES,
     }
     src = source(routes, seen)
     assert src.fetch_quotes(DOTA2)[0].app_id == DOTA2
@@ -101,27 +101,27 @@ def test_each_game_has_its_own_site() -> None:
 @pytest.mark.parametrize(
     "body",
     [
-        {**PRICES, "currency": "USD"},
+        {**PRICES, "currency": "EUR"},
         {**PRICES, "success": False},
-        {"success": True, "currency": "EUR"},
+        {"success": True, "currency": "RUB"},
         {**PRICES, "items": [{"market_hash_name": "Zero", "volume": "1", "price": "0"}]},
     ],
 )
 def test_bad_price_list_is_an_error(body: dict[str, Any]) -> None:
     with pytest.raises(SourceError):
-        source({f"{CS}/prices/EUR.json": body}).fetch_quotes(CS2)
+        source({f"{CS}/prices/RUB.json": body}).fetch_quotes(CS2)
 
 
 def test_best_prices_mark_items_without_offers() -> None:
-    src = source({f"{CS}/prices/EUR.json": PRICES})
+    src = source({f"{CS}/prices/RUB.json": PRICES})
     quotes = src.fetch_best_prices([NAME, "Gone", NAME], CS2)
     assert [(q.market_hash_name, q.min_price, q.quantity) for q in quotes] == [
-        (NAME, Decimal("21.798"), 372),
+        (NAME, Decimal("1961.82"), 372),
         ("Gone", None, 0),
     ]
 
 
-def test_sales_history_in_euro_and_index_cached() -> None:
+def test_sales_history_in_rubles_and_index_cached() -> None:
     seen: list[str] = []
     now = [0.0]
     routes = {f"{CS}/full-history/all.json": INDEX, f"{CS}/full-history/7929.json": HISTORY}
@@ -129,10 +129,10 @@ def test_sales_history_in_euro_and_index_cached() -> None:
 
     sales = src.fetch_last_sales(NAME, CS2)
     assert [(s.price, s.sold_at) for s in sales] == [
-        (Decimal("23.62"), NOW - timedelta(hours=1)),
-        (Decimal("25.288"), NOW - timedelta(hours=2)),
+        (Decimal("2144.99"), NOW - timedelta(hours=1)),
+        (Decimal("2296.43"), NOW - timedelta(hours=2)),
     ]
-    assert all(s.currency is Currency.EUR and s.source == "marketcsgo" for s in sales)
+    assert all(s.currency is Currency.RUB and s.source == "marketcsgo" for s in sales)
     # Предмета нет в истории: продаж нет, отдельный файл не запрашивается.
     assert src.fetch_last_sales("Unknown", CS2) == []
     assert seen == [f"{CS}/full-history/all.json", f"{CS}/full-history/7929.json"]
@@ -151,7 +151,7 @@ def test_history_without_data_is_an_error() -> None:
 def test_requests_are_paced() -> None:
     now = [0.0]
     routes = {f"{CS}/full-history/all.json": INDEX, f"{CS}/full-history/7929.json": HISTORY}
-    src = source({**routes, f"{CS}/prices/EUR.json": PRICES}, now=now)
+    src = source({**routes, f"{CS}/prices/RUB.json": PRICES}, now=now)
     src.fetch_quotes(CS2)
     src.fetch_last_sales(NAME, CS2)  # ещё два запроса: третий ждёт окна
     assert now[0] >= 1.0
@@ -163,8 +163,8 @@ def test_requests_are_paced() -> None:
 def test_fee_rules() -> None:
     schedule = FeeSchedule.load()
     market = schedule.market("marketcsgo")
-    assert market.currency is Currency.EUR and market.settlement_days == 8
-    base = Money.of(Decimal("100"), Currency.EUR)
+    assert market.currency is Currency.RUB and market.settlement_days == 8
+    base = Money.of(Decimal("9000"), Currency.RUB)
     sell = schedule.select("marketcsgo", Operation.SELL, base)
     assert [r.rate for r in sell] == [Decimal("0.05")]
     assert schedule.methods("marketcsgo", Operation.WITHDRAW) == ["card"]
@@ -178,7 +178,7 @@ def tm_quote(name: str, price: str | None, qty: int = 10) -> Quote:
         source="marketcsgo",
         app_id=CS2,
         market_hash_name=name,
-        currency=Currency.EUR,
+        currency=Currency.RUB,
         kind=QuoteKind.AGGREGATE,
         min_price=None if price is None else Decimal(price),
         quantity=qty,
@@ -191,7 +191,7 @@ def tm_sale(name: str, price: str, days: int) -> Sale:
         source="marketcsgo",
         app_id=CS2,
         market_hash_name=name,
-        currency=Currency.EUR,
+        currency=Currency.RUB,
         price=Decimal(price),
         sold_at=NOW - timedelta(days=days, hours=1),
         fetched_at=NOW,
@@ -209,16 +209,16 @@ class FakeMarketCSGO:
 
     def fetch_best_prices(self, titles: list[str], app_id: int = CS2) -> list[Quote]:
         if self.fail_prices:
-            raise SourceError("prices/EUR.json: HTTP 503")
+            raise SourceError("prices/RUB.json: HTTP 503")
         self.requested = list(titles)
-        prices = {NAME: "9.00", "X": "30.00"}
+        prices = {NAME: "810.00", "X": "2700.00"}
         return [tm_quote(t, prices.get(t), 10 if t in prices else 0) for t in titles]
 
     def fetch_last_sales(self, title: str, app_id: int = CS2) -> list[Sale]:
         self.sales_for.append(title)
         if self.fail_sales:
             raise SourceError("full-history: HTTP 503")
-        return [tm_sale(title, "27.00", d) for d in range(6)] if title == "X" else []
+        return [tm_sale(title, "2430.00", d) for d in range(6)] if title == "X" else []
 
 
 def _pipeline(storage: Storage, tm: FakeMarketCSGO, out: list[str]) -> Pipeline:
@@ -254,7 +254,7 @@ def test_market_csgo_routes() -> None:
     assert ("X", "skinport", "marketcsgo") in routes
     x = next(o for o in result.found if o.name == "X")
     # Цена продажи — медиана реальных сделок, ниже минимального лота.
-    assert x.result.sell_price == Money.of(Decimal("27.00"), Currency.EUR)
+    assert x.result.sell_price == Money.of(Decimal("2430.00"), Currency.RUB)
     assert x.sell.basis == "медиана продаж 7д, 6 эпизодов"
     assert x.result.lock_days >= 8
 
@@ -279,7 +279,7 @@ def test_market_csgo_failure_skips_only_it() -> None:
     result = _pipeline(Storage(":memory:"), FakeMarketCSGO(fail_prices=True), out).scan(
         ScanOptions(limit=2)
     )
-    assert "Market.CSGO пропущен: prices/EUR.json: HTTP 503" in out
+    assert "Market.CSGO пропущен: prices/RUB.json: HTTP 503" in out
     assert result.found and all(
         "marketcsgo" not in (o.result.buy_market, o.result.sell_market) for o in result.found
     )

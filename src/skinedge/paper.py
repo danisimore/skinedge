@@ -8,7 +8,8 @@ Protection и 7 дней до выплаты), поэтому сделка пр�
 
 Пересчёт идёт по тем же правилам, что и сигнал: та же оценка цены продажи,
 те же комиссии и тот же курс, чтобы результат отражал изменение рынка, а не
-изменение курса.
+изменение курса. Сделка, записанная до смены валюты площадки продажи
+(Market.CSGO: EUR → RUB), проверяется только по данным в своей валюте.
 """
 
 from __future__ import annotations
@@ -63,6 +64,7 @@ class PaperTrade(BaseModel):
     profit_eur: Decimal
     roi: Decimal
     usd_per_eur: Decimal | None
+    rub_per_eur: Decimal | None = None
     complete: bool
     lock_days: int
     model: int = MODEL
@@ -86,6 +88,7 @@ class PaperTrade(BaseModel):
             profit_eur=r.profit.amount,
             roi=r.roi,
             usd_per_eur=fx.rates.get(Currency.USD),
+            rub_per_eur=fx.rates.get(Currency.RUB),
             complete=r.complete,
             lock_days=r.lock_days,
         )
@@ -154,8 +157,10 @@ def evaluate(
     """
     from skinedge.scanner import estimate_sell
 
-    rates = {Currency.USD: trade.usd_per_eur} if trade.usd_per_eur is not None else {}
+    signal = {Currency.USD: trade.usd_per_eur, Currency.RUB: trade.rub_per_eur}
+    rates = {c: r for c, r in signal.items() if r is not None}
     fx = FxRates(rates=rates, spread=spread, source="paper")
+    schedule = schedule.in_currency(trade.sell_market, trade.sell_currency)
     calc = RouteCalculator(
         schedule, fx, trade.buy_market, trade.sell_market, item=trade.market_hash_name
     )
@@ -167,6 +172,8 @@ def evaluate(
         quote = storage.quote_after(trade.market_hash_name, trade.sell_market, at, trade.app_id)
         if quote is None or quote.fetched_at - at > timedelta(days=1):
             continue  # нет данных около контрольной точки
+        if quote.currency is not trade.sell_currency:
+            continue  # площадка сменила валюту после сигнала: сравнимых данных нет
         sales = storage.sales_after(
             trade.market_hash_name, trade.sell_market, SalesWindow.D7, at, trade.app_id
         )
